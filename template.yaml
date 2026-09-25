@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AI-Driven Predictive and Explainable Serverless Event Monitoring System.
+  Extends EventBridge -> Lambda -> DynamoDB -> CloudWatch -> SNS with Isolation Forest anomaly detection and LLM-powered incident explanation.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.11
+    Tracing: Active
+    Environment:
+      Variables:
+        AWS_TABLE_MONITORING: !Ref MonitoringDataTable
+        AWS_TABLE_AI_ANALYSIS: !Ref AIAnalysisTable
+        AWS_TABLE_INCIDENTS: !Ref IncidentsTable
+        AWS_TABLE_SERVICES: !Ref ServicesTable
+        SNS_TOPIC_ARN: !Ref MonitoringAlertsTopic
+        SNS_ALERT_ENABLED: 'true'
+        AI_PROVIDER: 'mock'
+        LOG_LEVEL: 'INFO'
+        ML_MODEL_PATH: '/tmp/models'
+
+Resources:
+  # ==========================================
+  # DynamoDB Storage Layer
+  # ==========================================
+  ServicesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Services
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: service_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: service_id
+          KeyType: HASH
+
+  MonitoringDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MonitoringData
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: service_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: service_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  IncidentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Incidents
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incident_id
+          AttributeType: S
+        - AttributeName: service_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ServiceIndex
+          KeySchema:
+            - AttributeName: service_id
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AIAnalysisTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AIAnalysis
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: analysis_id
+          AttributeType: S
+        - AttributeName: incident_id
+          AttributeType: S
+        - AttributeName: service_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: analysis_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: IncidentIndex
+          KeySchema:
+            - AttributeName: incident_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ServiceIndex
+          KeySchema:
+            - AttributeName: service_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ==========================================
+  # SNS Alerting Topic
+  # ==========================================
+  MonitoringAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: serverless-monitoring-alerts
+      DisplayName: AI Monitoring Intelligent Alerts
+
+  # ==========================================
+  # Lambda Functions
+  # ==========================================
+  HealthCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: backend.lambdas.health_checker.handler.handler
+      Description: Periodic health checker scheduled by EventBridge
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ServicesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MonitoringDataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AIAnalysisTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt MonitoringAlertsTopic.TopicName
+      Events:
+        ScheduledCheck:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Name: MonitoringScheduleRule
+            Description: Triggers health check every 1 minute
+            Enabled: true
+
+  AnomalyDetectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: backend.lambdas.anomaly_detector.handler.handler
+      Description: Standalone batch anomaly detector
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ServicesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MonitoringDataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentsTable
+
+  IncidentAnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: backend.lambdas.incident_analyzer.handler.handler
+      Description: Asynchronous LLM incident explainer
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MonitoringDataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AIAnalysisTable
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: backend.main.handler
+      Description: FastAPI serverless REST API
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ServicesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MonitoringDataTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AIAnalysisTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt MonitoringAlertsTopic.TopicName
+      Events:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+        RootApi:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+
+Outputs:
+  ApiEndpoint:
+    Description: HTTP API Gateway endpoint URL for FastAPI backend
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  SnsTopicArn:
+    Description: Amazon SNS Topic ARN for intelligent alerting
+    Value: !Ref MonitoringAlertsTopic
+  ServicesTableName:
+    Description: Services DynamoDB table
+    Value: !Ref ServicesTable
+  MonitoringDataTableName:
+    Description: MonitoringData DynamoDB table
+    Value: !Ref MonitoringDataTable
+  IncidentsTableName:
+    Description: Incidents DynamoDB table
+    Value: !Ref IncidentsTable
+  AIAnalysisTableName:
+    Description: AIAnalysis DynamoDB table
+    Value: !Ref AIAnalysisTable
