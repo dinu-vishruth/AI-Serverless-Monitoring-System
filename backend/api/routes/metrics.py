@@ -35,9 +35,9 @@ def get_system_overview():
         sid = s.get("service_id")
         latest = mon_repo.get_latest_record(sid)
         if latest:
-            rt = latest.get("response_time", 0)
-            avail = latest.get("availability", 1)
-            err = latest.get("error", 0)
+            rt = float(latest.get("response_time", 0))
+            avail = float(latest.get("availability", 1))
+            err = float(latest.get("error", 0))
             
             total_rt += rt
             rt_count += 1
@@ -45,7 +45,7 @@ def get_system_overview():
 
             if avail == 0:
                 down += 1
-            elif err > 0 or rt > s.get("response_time_threshold", 2000):
+            elif err > 0 or rt > float(s.get("response_time_threshold", 2000)):
                 degraded += 1
             else:
                 healthy += 1

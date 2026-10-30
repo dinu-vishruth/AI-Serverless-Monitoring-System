@@ -107,7 +107,12 @@ class IncidentResponse(BaseModel):
 # --- AI & Assistant Schemas ---
 
 class AIChatRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="User question about system health or incidents")
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Question about the application's monitoring context",
+    )
     service_id: Optional[str] = None
     incident_id: Optional[str] = None
 

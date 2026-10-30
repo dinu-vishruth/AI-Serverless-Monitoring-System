@@ -15,8 +15,8 @@ export default function Navbar({
           <Sparkles size={22} color="#ffffff" />
         </div>
         <div>
-          <h1 className="brand-title">AegisAI</h1>
-          <p className="brand-subtitle">AI-Driven Serverless Event Monitoring</p>
+          <h1 className="brand-title">Intelligent Serverless Monitoring</h1>
+          <p className="brand-subtitle">Intelligent Serverless Monitoring System</p>
         </div>
       </div>
 

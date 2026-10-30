@@ -1,4 +1,4 @@
-# Complete Project Guide: AI-Driven Predictive and Explainable Serverless Event Monitoring System (AegisAI)
+# Complete Project Guide: Intelligent Serverless Monitoring System
 
 ---
 
@@ -14,8 +14,8 @@ This legacy paradigm suffers from three critical limitations:
 
 ---
 
-### 1.2 The AI-Driven Solution: AegisAI
-**AegisAI** preserves the lightweight efficiency of the AWS serverless paradigm (**EventBridge → Lambda → DynamoDB → CloudWatch → SNS**) while augmenting it with an **Intelligent AI Layer**:
+### 1.2 The Intelligent Monitoring Solution
+The **Intelligent Serverless Monitoring System** preserves the lightweight efficiency of the AWS serverless paradigm (**EventBridge → Lambda → DynamoDB → CloudWatch → SNS**) while augmenting it with an **Intelligent AI Layer**:
 
 * **Unsupervised Anomaly Detection (Isolation Forest)**: Learns multi-dimensional distributions of response times, jitter, status codes, and error ratios without needing labeled failure data.
 * **Multi-Factor Risk Scoring Engine (0–100)**: Combines statistical deviation, threshold breach ratios, and ML anomaly scores into a single actionable risk index.
@@ -43,7 +43,7 @@ graph TD
         ML_PREP --> IF[Isolation Forest Model\nUnsupervised Anomaly Detector]
         IF --> RISK[Multi-Factor Risk Engine\n0-100 Score]
         RISK -->|Score >= 60 or Outlier| INC_CREATE[Create Incident\nDynamoDB: Incidents]
-        INC_CREATE --> LLM[Generative AI Provider\nOpenAI / Bedrock / LocalEngine]
+        INC_CREATE --> LLM[Generative AI Provider\nOpenAI / Bedrock]
         LLM --> AIDB[(DynamoDB: AIAnalysis)]
     end
 
@@ -104,11 +104,15 @@ Configuration in `.env`:
 AWS_REGION=us-east-1
 ENVIRONMENT=development
 
-# AI Provider ('mock' for built-in local AI, 'openai' for GPT-4o, 'aws_bedrock' for Claude)
-AI_PROVIDER=mock
-AI_API_KEY=your-openai-api-key-if-using-openai
-AI_MODEL=gpt-4o-mini
+# AI Provider (Groq; get a key from https://console.groq.com/keys)
+AI_PROVIDER=groq
+GROQ_API_KEY=your-groq-api-key
+GROQ_MODEL=openai/gpt-oss-120b
 ```
+
+The assistant calls Groq directly through its OpenAI-compatible API using `openai/gpt-oss-120b`, and grounds answers in the service, telemetry, and incident context supplied by the application. It declines unrelated questions and reports missing provider configuration instead of substituting a canned response. In PowerShell, clear stale `GROQ_API_KEY` and `GROQ_MODEL` process environment variables before restarting the backend if you want it to load the values from `.env`. Keep `.env` private and never commit a real API key.
+
+In local development, the backend checks active services automatically according to each service's `check_interval`. Set `LOCAL_MONITORING_ENABLED=false` in `.env` to disable it. On AWS, EventBridge continues to invoke the scheduled health-check Lambda.
 
 ---
 
@@ -118,11 +122,11 @@ AI_MODEL=gpt-4o-mini
 # In project root:
 python -m pip install -r backend/requirements.txt
 
-# Launch FastAPI on port 8000
-python -m uvicorn backend.main:app --reload --port 8000
+# Launch FastAPI on port 8001
+python -m uvicorn backend.main:app --reload --port 8001
 ```
-- **Interactive Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **API Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+- **Interactive Swagger Docs**: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs)
+- **API Health Check**: [http://127.0.0.1:8001/health](http://127.0.0.1:8001/health)
 
 ---
 
@@ -194,8 +198,10 @@ sam build
 sam deploy --guided
 ```
 
+When prompted for `GroqApiKey`, provide a valid key. It is marked `NoEcho` by CloudFormation; do not save it in a committed `samconfig.toml`.
+
 SAM will prompt you for:
-- **Stack Name**: `aegis-serverless-monitor`
+- **Stack Name**: `serverless-event-monitor`
 - **AWS Region**: `us-east-1` (or your preferred region)
 - **Confirm changes before deploy**: `Y`
 - **Allow SAM CLI IAM role creation**: `Y`

@@ -4,11 +4,11 @@ AI provider abstraction — defines the interface all LLM providers must impleme
 Supported providers:
   - openai      : OpenAI API (GPT-4o-mini, GPT-4o, etc.)
   - aws_bedrock : AWS Bedrock (Claude, Titan, etc.)
-  - mock        : Built-in local explainability engine (offline/testing)
+  - mock        : Local incident-analysis simulation (chat is disabled)
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict
+from typing import List
 from backend.utils.config import get_settings
 from backend.utils.logger import get_logger
 
@@ -45,11 +45,9 @@ class AIProviderError(Exception):
 
 class MockAIProvider(AIProvider):
     """
-    Built-in Intelligent Local SRE Provider.
-    Generates deterministic, context-aware telemetry root-cause explanations
-    and conversational answers when external LLM credentials are not configured.
+    Local incident-analysis simulation used for testing without an LLM.
     """
-    provider_name: str = "AegisAI-LocalEngine"
+    provider_name: str = "AI-Serverless-LocalEngine"
 
     async def analyze(self, system_prompt: str, user_prompt: str) -> dict:
         """Simulates structured telemetry analysis."""
@@ -81,41 +79,74 @@ class MockAIProvider(AIProvider):
         }
 
     async def chat(self, messages: List[dict]) -> str:
-        """Answers chat queries with context."""
-        query = messages[-1].get("content", "") if messages else ""
-        return (
-            f"Based on real-time serverless telemetry, the system is actively monitoring configured endpoints. "
-            f"Isolation Forest evaluates response time, error rate, and jitter. "
-            f"If degradation occurs, risk scoring will escalate and trigger automated alerts."
+        """Prevents the mock provider from presenting canned text as an LLM answer."""
+        raise AIProviderError(
+            "The chat assistant requires a real LLM. Configure AI_PROVIDER=groq with "
+            "GROQ_API_KEY, AI_PROVIDER=openai with AI_API_KEY, or aws_bedrock with valid AWS credentials.",
+            provider="mock",
+            recoverable=False,
         )
 
 
 def get_ai_provider() -> AIProvider:
     """
-    Factory — returns the configured AI provider instance.
-    Falls back gracefully to MockAIProvider if keys are missing or invalid.
+    Returns the explicitly configured provider without silently substituting a mock.
     """
     settings = get_settings()
     provider_name = settings.ai_provider.lower()
 
     if provider_name == "openai":
+        if not settings.ai_api_key:
+            raise AIProviderError(
+                "AI_API_KEY is not configured. Set it in the backend environment to use OpenAI.",
+                provider="openai",
+                recoverable=False,
+            )
         try:
-            if not settings.ai_api_key:
-                logger.info("No AI_API_KEY set; using AegisAI Local Engine.")
-                return MockAIProvider()
             from backend.ai.openai_provider import OpenAIProvider
             return OpenAIProvider()
         except Exception as e:
-            logger.warning(f"Failed to initialize OpenAI provider ({e}); falling back to local AI engine.")
-            return MockAIProvider()
+            logger.error("Failed to initialize OpenAI provider.", extra={"action": "ai_provider_init"})
+            raise AIProviderError(
+                "Could not initialize OpenAI. Verify the backend dependencies and configuration.",
+                provider="openai",
+                recoverable=False,
+            ) from e
+    elif provider_name == "groq":
+        if not settings.groq_api_key:
+            raise AIProviderError(
+                "GROQ_API_KEY is not configured. Set it in the backend environment to use Groq.",
+                provider="groq",
+                recoverable=False,
+            )
+        try:
+            from backend.ai.groq_provider import GroqProvider
+            return GroqProvider()
+        except Exception as e:
+            logger.error("Failed to initialize Groq provider.", extra={"action": "ai_provider_init"})
+            raise AIProviderError(
+                "Could not initialize Groq. Verify the backend dependencies and configuration.",
+                provider="groq",
+                recoverable=False,
+            ) from e
 
     elif provider_name == "aws_bedrock":
         try:
             from backend.ai.aws_provider import AWSBedrockProvider
             return AWSBedrockProvider()
         except Exception as e:
-            logger.warning(f"Failed to initialize Bedrock provider ({e}); falling back to local AI engine.")
-            return MockAIProvider()
+            logger.error("Failed to initialize AWS Bedrock provider.", extra={"action": "ai_provider_init"})
+            raise AIProviderError(
+                "Could not initialize AWS Bedrock. Verify the backend dependencies, AWS credentials, and configuration.",
+                provider="aws_bedrock",
+                recoverable=False,
+            ) from e
 
-    else:
+    if provider_name == "mock":
         return MockAIProvider()
+
+    raise AIProviderError(
+        f"Unsupported AI_PROVIDER '{settings.ai_provider}'. Choose groq, openai, aws_bedrock, or mock.",
+        provider=provider_name,
+        recoverable=False,
+    )

@@ -21,6 +21,10 @@ logger = get_logger(__name__)
 def _to_decimal(value):
     if isinstance(value, float):
         return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _to_decimal(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_to_decimal(nested_value) for nested_value in value]
     return value
 
 
@@ -67,7 +71,7 @@ class AIAnalysisRepository:
             "recommended_actions": analysis.get("recommended_actions", []),
             "confidence": analysis.get("confidence", "low"),
         }
-        self.table.put_item(Item=item)
+        self.table.put_item(Item=_to_decimal(item))
         logger.info(
             f"Stored AI analysis: {item['analysis_id']}",
             extra={"service_id": item["service_id"], "action": "store_analysis"},

@@ -19,6 +19,10 @@ logger = get_logger(__name__)
 def _to_decimal(value):
     if isinstance(value, float):
         return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _to_decimal(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_to_decimal(nested_value) for nested_value in value]
     return value
 
 
@@ -64,7 +68,7 @@ class IncidentRepository:
             "metrics_snapshot": incident.get("metrics_snapshot", {}),
             "resolved_at": None,
         }
-        self.table.put_item(Item=item)
+        self.table.put_item(Item=_to_decimal(item))
         logger.info(
             f"Created incident: {item['incident_id']}",
             extra={"incident_id": item["incident_id"], "action": "create_incident"},

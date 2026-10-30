@@ -199,9 +199,12 @@ def get_dynamodb_resource():
     if not HAS_BOTO3:
         return None
 
+    settings = get_settings()
+    if settings.environment.lower() in {"development", "dev", "local", "test"}:
+        return None
+
     if _dynamodb_resource is None:
         try:
-            settings = get_settings()
             _dynamodb_resource = boto3.resource("dynamodb", region_name=settings.aws_region)
         except Exception:
             _dynamodb_resource = None

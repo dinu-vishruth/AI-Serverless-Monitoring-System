@@ -21,9 +21,11 @@ class Settings(BaseSettings):
     services_table: str = Field(default="Services", alias="SERVICES_TABLE")
 
     # AI Provider
-    ai_provider: str = Field(default="openai", alias="AI_PROVIDER")
+    ai_provider: str = Field(default="groq", alias="AI_PROVIDER")
     ai_api_key: Optional[str] = Field(default=None, alias="AI_API_KEY")
     ai_model: str = Field(default="gpt-4o-mini", alias="AI_MODEL")
+    groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
+    groq_model: str = Field(default="openai/gpt-oss-120b", alias="GROQ_MODEL")
 
     # AWS Bedrock
     bedrock_model_id: str = Field(
@@ -38,7 +40,8 @@ class Settings(BaseSettings):
 
     # API & Environment
     environment: str = Field(default="development", alias="ENVIRONMENT")
-    api_base_url: str = Field(default="http://localhost:8000", alias="API_BASE_URL")
+    local_monitoring_enabled: bool = Field(default=True, alias="LOCAL_MONITORING_ENABLED")
+    api_base_url: str = Field(default="http://127.0.0.1:8001", alias="API_BASE_URL")
     api_stage: str = Field(default="dev", alias="API_STAGE")
     cors_origins: str = Field(
         default="http://localhost:5173,http://localhost:3000", alias="CORS_ORIGINS"

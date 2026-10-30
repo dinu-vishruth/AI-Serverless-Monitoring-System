@@ -7,12 +7,33 @@ DynamoDB Table: Services
 
 from typing import Optional, List
 from datetime import datetime, timezone
+from decimal import Decimal
 from backend.database.dynamodb import get_table, Key, Attr
 from backend.utils.config import get_settings
 from backend.utils.logger import get_logger
 from backend.utils.validators import generate_service_id
 
 logger = get_logger(__name__)
+
+
+def _to_dynamodb(value):
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _to_dynamodb(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_to_dynamodb(nested_value) for nested_value in value]
+    return value
+
+
+def _from_dynamodb(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _from_dynamodb(nested_value) for key, nested_value in value.items()}
+    if isinstance(value, list):
+        return [_from_dynamodb(nested_value) for nested_value in value]
+    return value
 
 
 class ServiceRepository:
@@ -41,7 +62,7 @@ class ServiceRepository:
             "created_at": now,
             "updated_at": now,
         }
-        self.table.put_item(Item=item)
+        self.table.put_item(Item=_to_dynamodb(item))
         logger.info(
             f"Created service: {item['service_id']}",
             extra={"service_id": item["service_id"], "action": "create_service"},
@@ -51,7 +72,8 @@ class ServiceRepository:
     def get_service(self, service_id: str) -> Optional[dict]:
         """Retrieves a service by ID."""
         response = self.table.get_item(Key={"service_id": service_id})
-        return response.get("Item")
+        item = response.get("Item")
+        return _from_dynamodb(item) if item else None
 
     def get_all_services(self) -> List[dict]:
         """Returns all monitored services."""
@@ -60,7 +82,7 @@ class ServiceRepository:
         while "LastEvaluatedKey" in response:
             response = self.table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
             items.extend(response.get("Items", []))
-        return items
+        return [_from_dynamodb(item) for item in items]
 
     def list_services(self) -> List[dict]:
         """Alias for get_all_services."""
@@ -78,7 +100,7 @@ class ServiceRepository:
                         ExclusiveStartKey=response["LastEvaluatedKey"],
                     )
                     items.extend(response.get("Items", []))
-                return items
+                return [_from_dynamodb(item) for item in items]
             except Exception:
                 pass
         
@@ -99,7 +121,7 @@ class ServiceRepository:
             safe_key = f"#k_{key}"
             val_key = f":v_{key}"
             update_expr_parts.append(f"{safe_key} = {val_key}")
-            expr_attr_values[val_key] = value
+            expr_attr_values[val_key] = _to_dynamodb(value)
             expr_attr_names[safe_key] = key
 
         update_expression = "SET " + ", ".join(update_expr_parts)
@@ -115,7 +137,8 @@ class ServiceRepository:
             f"Updated service: {service_id}",
             extra={"service_id": service_id, "action": "update_service"},
         )
-        return response.get("Attributes") or self.get_service(service_id)
+        attributes = response.get("Attributes")
+        return _from_dynamodb(attributes) if attributes else self.get_service(service_id)
 
     def delete_service(self, service_id: str) -> bool:
         """Deletes a service configuration."""

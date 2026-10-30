@@ -13,7 +13,7 @@ export default function AIAssistantModal({ onClose, initialIncidentId, initialSe
   const [messages, setMessages] = useState([
     {
       sender: 'ai',
-      text: "Hello! I'm your AI Serverless Monitoring Assistant. I can analyze real-time telemetry, interpret ML anomalies, and explain root causes. How can I assist you today?"
+      text: "Hello! I answer questions about the services, telemetry, anomalies, and incidents available in this monitoring system. I won't answer unrelated questions or guess when the data is missing."
     }
   ]);
   const [input, setInput] = useState('');
@@ -34,7 +34,7 @@ export default function AIAssistantModal({ onClose, initialIncidentId, initialSe
         sender: 'ai',
         text: res.answer,
         actions: res.suggested_actions,
-        provider: res.provider
+        provider: res.provider !== 'Context filter' ? res.provider : null
       };
       setMessages((prev) => [...prev, aiMsg]);
     } catch (err) {
@@ -57,7 +57,7 @@ export default function AIAssistantModal({ onClose, initialIncidentId, initialSe
               <Bot size={18} color="#ffffff" />
             </div>
             <div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Aegis SRE Assistant</h3>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>AI SRE Assistant</h3>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Explainable AI telemetry intelligence</p>
             </div>
           </div>
@@ -118,6 +118,11 @@ export default function AIAssistantModal({ onClose, initialIncidentId, initialSe
                 }}
               >
                 <div>{m.text}</div>
+                {m.provider && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    Answered by {m.provider}
+                  </div>
+                )}
                 {m.actions?.length > 0 && (
                   <div style={{ marginTop: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#a5b4fc', marginBottom: '0.25rem' }}>Suggested Actions:</div>
@@ -132,7 +137,7 @@ export default function AIAssistantModal({ onClose, initialIncidentId, initialSe
           {loading && (
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
               <Sparkles size={14} className="spin" color="var(--accent-ai)" />
-              Analyzing telemetry context...
+              Checking monitoring context...
             </div>
           )}
         </div>

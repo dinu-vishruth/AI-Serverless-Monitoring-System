@@ -1,4 +1,4 @@
-# AegisAI — AI-Driven Predictive & Explainable Serverless Event Monitoring System
+# Intelligent Serverless Monitoring System
 
 [![AWS Serverless](https://img.shields.io/badge/AWS-Serverless-orange.svg)](https://aws.amazon.com/serverless/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
@@ -78,6 +78,16 @@ graph TD
 
 ### 1. Backend Setup
 
+The assistant uses Groq by default. Copy `.env.example` to `.env`, add your Groq API key as `GROQ_API_KEY`, and keep `AI_PROVIDER=groq`. The configured `openai/gpt-oss-120b` model replaces Groq's retired `llama-3.3-70b-versatile` model. Restart the backend after editing `.env`. In PowerShell, environment variables override `.env`; clear any stale overrides in the backend terminal before restarting:
+
+```powershell
+Remove-Item Env:GROQ_API_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:GROQ_MODEL -ErrorAction SilentlyContinue
+python -m uvicorn backend.main:app --reload --port 8001
+```
+
+In local development, the backend automatically checks active services using each service's configured `check_interval`. This starts collecting fresh telemetry as soon as the backend runs. Set `LOCAL_MONITORING_ENABLED=false` in `.env` to disable local checks; deployed AWS monitoring is scheduled by EventBridge.
+
 ```bash
 # Navigate to project root & create virtual environment
 python -m venv venv
@@ -87,10 +97,10 @@ venv\Scripts\activate   # (Windows) or source venv/bin/activate (Linux/Mac)
 pip install -r backend/requirements.txt
 
 # Run FastAPI backend
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.main:app --reload --port 8001
 ```
 
-FastAPI Swagger Documentation will be accessible at: `http://localhost:8000/docs`
+FastAPI Swagger Documentation will be accessible at: `http://127.0.0.1:8001/docs`
 
 ### 2. Frontend Setup
 

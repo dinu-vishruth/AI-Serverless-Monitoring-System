@@ -1,8 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  AI-Driven Predictive and Explainable Serverless Event Monitoring System.
+  Intelligent Serverless Monitoring System.
   Extends EventBridge -> Lambda -> DynamoDB -> CloudWatch -> SNS with Isolation Forest anomaly detection and LLM-powered incident explanation.
+
+Parameters:
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: Groq API key used by the monitoring assistant.
 
 Globals:
   Function:
@@ -12,13 +19,16 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        AWS_TABLE_MONITORING: !Ref MonitoringDataTable
-        AWS_TABLE_AI_ANALYSIS: !Ref AIAnalysisTable
-        AWS_TABLE_INCIDENTS: !Ref IncidentsTable
-        AWS_TABLE_SERVICES: !Ref ServicesTable
+        ENVIRONMENT: 'production'
+        MONITORING_TABLE: !Ref MonitoringDataTable
+        AI_ANALYSIS_TABLE: !Ref AIAnalysisTable
+        INCIDENT_TABLE: !Ref IncidentsTable
+        SERVICES_TABLE: !Ref ServicesTable
         SNS_TOPIC_ARN: !Ref MonitoringAlertsTopic
         SNS_ALERT_ENABLED: 'true'
-        AI_PROVIDER: 'mock'
+        AI_PROVIDER: 'groq'
+        GROQ_API_KEY: !Ref GroqApiKey
+        GROQ_MODEL: 'openai/gpt-oss-120b'
         LOG_LEVEL: 'INFO'
         ML_MODEL_PATH: '/tmp/models'
 

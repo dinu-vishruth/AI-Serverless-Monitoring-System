@@ -21,6 +21,7 @@ class AWSBedrockProvider(AIProvider):
             region_name=settings.bedrock_region,
         )
         self.model_id = settings.bedrock_model_id
+        self.provider_name = f"AWS Bedrock ({self.model_id})"
 
     async def analyze(self, system_prompt: str, user_prompt: str) -> dict:
         """Sends an analysis request to Bedrock and parses the JSON response."""

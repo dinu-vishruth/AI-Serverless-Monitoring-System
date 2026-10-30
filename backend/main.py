@@ -1,10 +1,6 @@
-"""
-FastAPI Main Application.
-Provides REST API endpoints for the AI-Driven Serverless Event Monitoring System.
-Runs locally or deployed to AWS Lambda via Mangum.
-"""
-
+import asyncio
 import time
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -24,12 +20,38 @@ from backend.utils.logger import get_logger
 settings = get_settings()
 logger = get_logger("fastapi_app")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    monitor_task = None
+    if (
+        settings.local_monitoring_enabled
+        and settings.environment.lower() in {"development", "dev", "local"}
+    ):
+        from backend.utils.local_monitor import run_local_monitoring
+
+        monitor_task = asyncio.create_task(run_local_monitoring())
+        logger.info("Started local service monitoring.", extra={"action": "local_monitoring_start"})
+
+    try:
+        yield
+    finally:
+        if monitor_task:
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Stopped local service monitoring.", extra={"action": "local_monitoring_stop"})
+
+
 app = FastAPI(
-    title="AI-Driven Serverless Event Monitoring System API",
+    title="Intelligent Serverless Monitoring System API",
     description="Intelligent health checking, anomaly detection, risk analysis, and LLM-assisted incident explainability.",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS configuration
@@ -76,7 +98,7 @@ def health_check():
 def root():
     """Root redirect / system metadata."""
     return {
-        "system": "AI-Driven Serverless Event Monitoring System",
+        "system": "Intelligent Serverless Monitoring System",
         "docs": "/docs",
         "health": "/health",
         "version": "1.0.0",
@@ -89,4 +111,4 @@ handler = Mangum(app, lifespan="off") if Mangum else None
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8001, reload=True)
