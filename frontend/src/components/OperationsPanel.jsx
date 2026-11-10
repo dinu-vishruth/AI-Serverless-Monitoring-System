@@ -2,21 +2,20 @@
 import { api } from '../services/api';
 
 export default function OperationsPanel({ services, incidents, onRefresh }) {
-  const [graph, setGraph] = useState(null);
   const [notifications, setNotifications] = useState(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [demo, setDemo] = useState('ONLINE');
   useEffect(() => {
     let live = true;
-    Promise.all([api.getDependencies(), api.getNotifications()])
-      .then(([g, n]) => { if (live) { setGraph(g); setNotifications(n); } })
+    api.getNotifications()
+      .then((n) => { if (live) setNotifications(n); })
       .catch((err) => { if (live) setMessage(err.message); });
     return () => { live = false; };
   }, [services]);
   async function run(action) {
     setBusy(true); setMessage('');
-    try { await action(); await onRefresh(); setMessage('Operation completed. Monitoring will verify the resulting state.'); }
+    try { await action(); await onRefresh(); }
     catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   }
@@ -35,11 +34,7 @@ export default function OperationsPanel({ services, incidents, onRefresh }) {
       </div>)}
       <p>Notifications: {notifications?.configured ? `${notifications.confirmed_email_subscriptions} confirmed email subscriptions` : 'SNS not configured'}. Email receipt requires a live delivery test.</p>
     </div>
-    <div className="card"><h3>Dependencies & blast radius</h3>
-      {!graph?.edges?.length && <p>No relationships configured. Add dependency service IDs when registering a service.</p>}
-      {(graph?.edges || []).map((edge, index) => <div className="dependency-edge" key={index}><span>{graph.nodes.find((n) => n.service_id === edge.source)?.name || edge.source}</span><span aria-label="depends on">→</span><span>{graph.nodes.find((n) => n.service_id === edge.dependency)?.name || edge.dependency}</span></div>)}
-      {(graph?.unhealthy_dependencies || []).map((n) => <p key={n.service_id}>{n.name}: {n.state}. Potentially affected: {n.affected_services.length} services.</p>)}
-      <h3>Failure demonstration</h3><p>Register the demo HTTPS endpoint first. Changing mode changes the actual test service response.</p>
+    <div className="card"><h3>Failure demonstration</h3><p>Register the demo HTTPS endpoint first. Changing mode changes the actual test service response.</p>
       <div className="operation-actions"><select aria-label="Demo failure mode" className="form-select" value={demo} onChange={(e) => setDemo(e.target.value)}>{['ONLINE','HTTP_500','HTTP_503','TIMEOUT','SLOW_RESPONSE','RECOVERY'].map((m) => <option key={m}>{m}</option>)}</select><button disabled={busy} className="btn btn-primary" onClick={() => run(() => api.setDemoMode(demo))}>Apply demo mode</button></div>
     </div>
     <div className="card"><h3>System timeline</h3>{events.length === 0 && <p>Lifecycle events appear after incident detection.</p>}{events.map((e, i) => <p className="timeline-event" key={i}><time>{new Date(e.timestamp).toLocaleTimeString()}</time> · {e.service} · {e.action} · {e.actor}</p>)}
