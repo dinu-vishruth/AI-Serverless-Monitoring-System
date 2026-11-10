@@ -7,6 +7,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from backend.utils.config import get_settings
+from backend.utils.validators import sanitize_log_content
 
 
 class JSONFormatter(logging.Formatter):
@@ -17,14 +18,14 @@ class JSONFormatter(logging.Formatter):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": sanitize_log_content(record.getMessage(), max_length=3000),
             "module": record.module,
             "function": record.funcName,
         }
         if record.exc_info and record.exc_info[0] is not None:
-            log_entry["exception"] = self.formatException(record.exc_info)
+            log_entry["exception"] = sanitize_log_content(self.formatException(record.exc_info), max_length=6000)
         # Include extra fields if present
-        for key in ("service_id", "incident_id", "action"):
+        for key in ("service_id", "incident_id", "action", "error_type", "status_code", "provider", "model_version", "duration_ms"):
             if hasattr(record, key):
                 log_entry[key] = getattr(record, key)
         return json.dumps(log_entry, default=str)

@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY backend/requirements-lambda.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade "pip>=26.2" "setuptools>=84.1.0" "wheel>=0.46.2" && pip install --no-cache-dir -r /tmp/requirements.txt pytest pytest-asyncio "moto[dynamodb,sns,s3,secretsmanager]"
+COPY backend /app/backend
+COPY tests /app/tests
+ENV ENVIRONMENT=test LOCAL_MONITORING_ENABLED=false AWS_DEFAULT_REGION=ap-south-2
+CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

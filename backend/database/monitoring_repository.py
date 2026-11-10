@@ -51,6 +51,7 @@ class MonitoringRepository:
     def store_monitoring_record(self, record: dict) -> dict:
         """Stores a single health-check result."""
         item = {
+            **record,
             "service_id": record["service_id"],
             "timestamp": record["timestamp"],
             "service_name": record.get("service_name", ""),
@@ -63,6 +64,9 @@ class MonitoringRepository:
             "timeout": int(record.get("timeout", 0)),
             "request_success": int(record.get("request_success", 0)),
         }
+        item["ttl"] = int(datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00")).timestamp()) + get_settings().telemetry_retention_days * 86400
+        from backend.database.service_repository import _to_dynamodb
+        item = _to_dynamodb(item)
         self.table.put_item(Item=item)
         logger.info(
             f"Stored monitoring record for {item['service_id']}",
@@ -97,12 +101,19 @@ class MonitoringRepository:
         elif end_time:
             key_condition = key_condition & Key("timestamp").lte(end_time)
 
-        response = self.table.query(
-            KeyConditionExpression=key_condition,
-            ScanIndexForward=False,
-            Limit=limit,
-        )
-        return [_from_decimal(item) for item in response.get("Items", [])]
+        items = []
+        kwargs = dict(KeyConditionExpression=key_condition, ScanIndexForward=False, Limit=limit)
+        while len(items) < limit:
+            kwargs["Limit"] = limit - len(items)
+            response = self.table.query(**kwargs)
+            items.extend(response.get("Items", []))
+            if not response.get("LastEvaluatedKey"):
+                break
+            kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return [_from_decimal(item) for item in items]
+
+    def get_recent_records(self, service_id, limit=100):
+        return self.get_records(service_id, limit=limit)
 
     def get_historical_records(
         self, service_id: str, hours: int = 24, limit: int = 500

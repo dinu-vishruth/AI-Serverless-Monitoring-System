@@ -3,16 +3,19 @@ Configuration module — loads settings from environment variables.
 """
 
 import os
+from pathlib import Path
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # AWS
-    aws_region: str = Field(default="us-east-1", alias="AWS_REGION")
+    aws_region: str = Field(default="ap-south-2", alias="AWS_REGION")
 
     # DynamoDB Tables
     monitoring_table: str = Field(default="MonitoringData", alias="MONITORING_TABLE")
@@ -57,6 +60,17 @@ class Settings(BaseSettings):
     ml_model_path: str = Field(default="ml-models/", alias="ML_MODEL_PATH")
     ml_retrain_threshold: int = Field(default=100, alias="ML_RETRAIN_THRESHOLD")
     ml_contamination: float = Field(default=0.1, alias="ML_CONTAMINATION")
+    ml_anomaly_threshold: float = Field(default=0.5, ge=0, le=1, alias="ML_ANOMALY_THRESHOLD")
+    model_bucket: Optional[str] = Field(default=None, alias="MODEL_BUCKET")
+    admin_token: Optional[str] = Field(default=None, alias="ADMIN_TOKEN")
+    admin_secret_arn: Optional[str] = Field(default=None, alias="ADMIN_SECRET_ARN")
+    groq_secret_arn: Optional[str] = Field(default=None, alias="GROQ_SECRET_ARN")
+    demo_enabled: bool = Field(default=False, alias="DEMO_ENABLED")
+    allow_private_targets: bool = Field(default=False, alias="ALLOW_PRIVATE_TARGETS")
+    telemetry_retention_days: int = Field(default=30, ge=1, le=365, alias="TELEMETRY_RETENTION_DAYS")
+    failure_threshold: int = Field(default=3, ge=1, le=20, alias="FAILURE_THRESHOLD")
+    recovery_threshold: int = Field(default=2, ge=1, le=20, alias="RECOVERY_THRESHOLD")
+    escalation_seconds: int = Field(default=900, ge=60, alias="ESCALATION_SECONDS")
 
     # Security
     jwt_secret_key: str = Field(default="dev-secret-change-me", alias="JWT_SECRET_KEY")
@@ -72,10 +86,7 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        populate_by_name = True
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", env_ignore_empty=True, populate_by_name=True)
 
 
 # Singleton settings instance

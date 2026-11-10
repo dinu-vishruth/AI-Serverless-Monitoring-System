@@ -43,51 +43,6 @@ class AIProviderError(Exception):
         self.recoverable = recoverable
 
 
-class MockAIProvider(AIProvider):
-    """
-    Local incident-analysis simulation used for testing without an LLM.
-    """
-    provider_name: str = "AI-Serverless-LocalEngine"
-
-    async def analyze(self, system_prompt: str, user_prompt: str) -> dict:
-        """Simulates structured telemetry analysis."""
-        return {
-            "incident_summary": (
-                "Telemetry telemetry analysis shows abnormal latency escalation exceeding configured thresholds. "
-                "The Isolation Forest flagged multidimensional variance with anomalous error distribution."
-            ),
-            "observed_facts": [
-                "Response time deviated by >200% above historical baseline moving average",
-                "Upstream gateway reported increased connection latency and occasional 5xx codes",
-                "Isolation Forest anomaly detector flagged high outlier score"
-            ],
-            "possible_causes": [
-                "Upstream downstream dependency saturation or rate limiting",
-                "Serverless cold start concurrency burst or thread pool saturation",
-                "Network latency degradation or intermittent DNS resolution delay"
-            ],
-            "impact": [
-                "Degraded user experience and possible request retry storms",
-                "Higher error rate if downstream timeouts continue"
-            ],
-            "recommended_actions": [
-                "Inspect CloudWatch Lambda logs for unhandled timeouts and exceptions",
-                "Verify database provisioned throughput and connection pool health",
-                "Review recent application deployments or traffic spikes"
-            ],
-            "confidence": "high",
-        }
-
-    async def chat(self, messages: List[dict]) -> str:
-        """Prevents the mock provider from presenting canned text as an LLM answer."""
-        raise AIProviderError(
-            "The chat assistant requires a real LLM. Configure AI_PROVIDER=groq with "
-            "GROQ_API_KEY, AI_PROVIDER=openai with AI_API_KEY, or aws_bedrock with valid AWS credentials.",
-            provider="mock",
-            recoverable=False,
-        )
-
-
 def get_ai_provider() -> AIProvider:
     """
     Returns the explicitly configured provider without silently substituting a mock.
@@ -113,7 +68,7 @@ def get_ai_provider() -> AIProvider:
                 recoverable=False,
             ) from e
     elif provider_name == "groq":
-        if not settings.groq_api_key:
+        if not settings.groq_api_key and not settings.groq_secret_arn:
             raise AIProviderError(
                 "GROQ_API_KEY is not configured. Set it in the backend environment to use Groq.",
                 provider="groq",
@@ -143,7 +98,7 @@ def get_ai_provider() -> AIProvider:
             ) from e
 
     if provider_name == "mock":
-        return MockAIProvider()
+        raise AIProviderError("Mock AI is disabled; configure a real provider", provider="mock", recoverable=False)
 
     raise AIProviderError(
         f"Unsupported AI_PROVIDER '{settings.ai_provider}'. Choose groq, openai, aws_bedrock, or mock.",

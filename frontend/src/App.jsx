@@ -7,6 +7,7 @@ import ServiceDetailModal from './components/ServiceDetailModal';
 import AIIncidentDrawer from './components/AIIncidentDrawer';
 import AIAssistantModal from './components/AIAssistantModal';
 import AddServiceModal from './components/AddServiceModal';
+import OperationsPanel from './components/OperationsPanel';
 import { api } from './services/api';
 import { Globe, AlertTriangle, Sparkles, Activity } from 'lucide-react';
 
@@ -16,6 +17,8 @@ export default function App() {
   const [services, setServices] = useState([]);
   const [incidents, setIncidents] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  const [token, setToken] = useState(sessionStorage.getItem('isms-token') || '');
   const [checkingIds, setCheckingIds] = useState({});
 
   // Modals & Drawers state
@@ -35,16 +38,18 @@ export default function App() {
     setIsRefreshing(true);
     try {
       const [overviewData, servicesData, incidentsData] = await Promise.all([
-        api.getOverview().catch(() => null),
-        api.getServices().catch(() => []),
-        api.getIncidents().catch(() => []),
+        api.getOverview(),
+        api.getServices(),
+        api.getIncidents(),
       ]);
 
       if (overviewData) setOverview(overviewData);
       if (servicesData) setServices(servicesData);
       if (incidentsData) setIncidents(incidentsData);
+      setError(null);
     } catch (err) {
       console.error('Failed to refresh data', err);
+      setError(err.message);
     } finally {
       setIsRefreshing(false);
     }
@@ -74,10 +79,10 @@ export default function App() {
 
   async function handleResolveIncident(incidentId) {
     try {
-      await api.updateIncident(incidentId, { status: 'RESOLVED', resolution_notes: 'Resolved by operator via dashboard' });
+      await api.updateIncident(incidentId, { status: 'ACKNOWLEDGED', resolution_notes: 'Acknowledged through dashboard' });
       await loadAllData();
     } catch (err) {
-      alert(`Resolve failed: ${err.message}`);
+      alert(`Acknowledgement failed: ${err.message}`);
     }
   }
 
@@ -92,6 +97,13 @@ export default function App() {
       <div className="ambient-glow-2" />
 
       <div className="app-container">
+        <form className="access-bar" onSubmit={(e) => { e.preventDefault(); sessionStorage.setItem('isms-token', token); loadAllData(); }}>
+          <label htmlFor="admin-token">Administrator access</label>
+          <input id="admin-token" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" placeholder="Bearer token (required in production)" />
+          <button className="btn btn-secondary" type="submit">Connect</button>
+          <button className="btn btn-secondary" type="button" onClick={() => { sessionStorage.removeItem('isms-token'); setToken(''); setServices([]); setIncidents([]); setOverview(null); }}>Sign out</button>
+        </form>
+        {error && <div className="error-banner" role="alert">ISMS data unavailable: {error}. Previously loaded data may be stale.</div>}
         <Navbar
           onOpenAddService={() => setIsAddServiceOpen(true)}
           onOpenAssistant={() => handleOpenAssistantForContext(null, null)}
@@ -102,6 +114,7 @@ export default function App() {
 
         {/* Top-level Executive Stats */}
         <OverviewCards overview={overview} />
+        <OperationsPanel services={services} incidents={incidents} onRefresh={loadAllData} />
 
         {/* Tabs Navigation */}
         <div className="tabs-nav">
@@ -138,7 +151,7 @@ export default function App() {
         {activeTab === 'incidents' && (
           <IncidentList
             incidents={incidents}
-            onSelectIncident={(inc) => setSelectedIncident(inc)}
+            onSelectIncident={async (inc) => { try { setSelectedIncident(await api.getIncident(inc.incident_id)); } catch (err) { setError(err.message); } }}
             onResolveIncident={handleResolveIncident}
           />
         )}

@@ -214,5 +214,5 @@ def compute_historical_metrics(records: list[dict]) -> dict:
         "avg_error_rate": sum(error_rates) / len(error_rates),
         "timeout_count": timeouts,
         "total_checks": len(records),
-        "recent_anomaly_count": 0,  # Updated by anomaly detection pipeline
+        "recent_anomaly_count": sum(bool(r.get("anomaly")) for r in records[-20:]),
     }

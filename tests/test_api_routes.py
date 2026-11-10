@@ -48,7 +48,7 @@ class TestAPIRoutes(unittest.TestCase):
         self.assertEqual(data["overall_availability_percentage"], 100.0)
         self.assertEqual(data["healthy_services"], 1)
 
-    def test_ai_chat_uses_llm_chat_with_current_service_context(self):
+    def test_ai_chat_uses_llm_with_verified_service_facts(self):
         service = {
             "service_id": "svc-1",
             "service_name": "Payments API",
@@ -59,7 +59,7 @@ class TestAPIRoutes(unittest.TestCase):
         }
         provider = Mock()
         provider.provider_name = "OpenAI (gpt-4o-mini)"
-        provider.chat = AsyncMock(return_value="Payments API is responding in 125 ms.")
+        provider.analyze = AsyncMock(return_value={"fact_ids":["fact-3"], "possible_causes":[], "recommended_actions":[]})
 
         with patch("backend.api.routes.ai.ServiceRepository") as service_repo, \
              patch("backend.api.routes.ai.IncidentRepository") as incident_repo, \
@@ -82,13 +82,12 @@ class TestAPIRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["answer"], "Payments API is responding in 125 ms.")
+        self.assertIn("response 125 ms", data["answer"])
         self.assertEqual(data["provider"], "OpenAI (gpt-4o-mini)")
-        messages = provider.chat.await_args.args[0]
-        self.assertEqual(messages[0]["role"], "system")
-        self.assertIn("125", messages[1]["content"])
-        self.assertIn("Payments API", messages[1]["content"])
-        self.assertIn("Isolation Forest features", messages[1]["content"])
+        prompt = provider.analyze.await_args.kwargs["user_prompt"]
+        self.assertIn("125", prompt)
+        self.assertIn("Payments API", prompt)
+        self.assertIn("Isolation Forest features", prompt)
 
     def test_ai_chat_refuses_unrelated_questions_without_calling_llm(self):
         with patch("backend.api.routes.ai.ServiceRepository") as service_repo, \
@@ -144,6 +143,7 @@ class TestAPIRoutes(unittest.TestCase):
             ai_provider="groq",
             groq_api_key="test-groq-key",
             groq_model="openai/gpt-oss-120b",
+            groq_secret_arn=None,
         )
         with patch("backend.ai.provider.get_settings", return_value=settings), \
              patch("backend.ai.openai_provider.get_settings", return_value=settings), \
@@ -154,10 +154,12 @@ class TestAPIRoutes(unittest.TestCase):
         openai_client.assert_called_once_with(
             api_key="test-groq-key",
             base_url="https://api.groq.com/openai/v1",
+            timeout=12.0,
+            max_retries=1,
         )
 
     def test_groq_provider_requires_groq_api_key(self):
-        settings = Mock(ai_provider="groq", groq_api_key="")
+        settings = Mock(ai_provider="groq", groq_api_key="", groq_secret_arn=None)
         with patch("backend.ai.provider.get_settings", return_value=settings):
             with self.assertRaisesRegex(AIProviderError, "GROQ_API_KEY is not configured"):
                 get_ai_provider()
@@ -167,6 +169,7 @@ class TestAPIRoutes(unittest.TestCase):
             ai_provider="groq",
             groq_api_key="test-groq-key",
             groq_model="openai/gpt-oss-120b",
+            groq_secret_arn=None,
         )
         with patch("backend.ai.provider.get_settings", return_value=settings), \
              patch("backend.ai.openai_provider.get_settings", return_value=settings), \

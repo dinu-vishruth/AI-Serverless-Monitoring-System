@@ -33,7 +33,8 @@ def list_services(
         latest = mon_repo.get_latest_record(service_id)
         s_copy = dict(s)
         if latest:
-            s_copy["last_check_status"] = "HEALTHY" if latest.get("availability") == 1 and latest.get("error") == 0 else "DOWN" if latest.get("availability") == 0 else "DEGRADED"
+            from backend.operations import service_health
+            s_copy["last_check_status"] = service_health(s, latest)
             s_copy["last_response_time"] = latest.get("response_time")
             s_copy["last_status_code"] = latest.get("status_code")
             s_copy["last_checked_at"] = latest.get("timestamp")
@@ -70,9 +71,12 @@ def create_service(payload: ServiceCreate):
     repo = ServiceRepository()
     try:
         service_data = payload.model_dump()
+        _validate_dependencies(None, service_data, repo)
         created = repo.create_service(service_data)
         logger.info(f"Service created: {created['service_id']} ({created['service_name']})")
         return created
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create service: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -90,7 +94,15 @@ def update_service(service_id: str, payload: ServiceUpdate):
     if not update_data:
         return existing
 
-    updated = repo.update_service(service_id, update_data)
+    # Validate the complete configuration on update using the same bounds as creation.
+    from pydantic import ValidationError
+    try:
+        ServiceCreate(**{**existing, **update_data})
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _validate_dependencies(service_id, {**existing, **update_data}, repo)
+    from backend.database.concurrency import mutate
+    updated, _ = mutate(repo.table, {"service_id": service_id}, lambda item: item.update(update_data))
     return updated
 
 
@@ -107,3 +119,16 @@ def delete_service(service_id: str):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete service")
 
     return {"message": f"Service '{service_id}' deleted successfully"}
+
+
+def _validate_dependencies(service_id, data, repo):
+    by_id = {s["service_id"]: s.get("dependencies", []) for s in repo.get_all_services()}
+    dependencies = data.get("dependencies", [])
+    if any(d == service_id or d not in by_id for d in dependencies):
+        raise HTTPException(422, "Dependencies must reference other registered services")
+    if service_id:
+        by_id[service_id] = dependencies
+        def visit(node, path):
+            if node in path: raise HTTPException(422, "Dependency cycles are not allowed")
+            for child in by_id.get(node, []): visit(child, path | {node})
+        visit(service_id, set())

@@ -17,7 +17,7 @@ router = APIRouter(prefix="/monitoring", tags=["Monitoring"])
 @router.get("/{service_id}/records", response_model=List[dict])
 def get_service_records(
     service_id: str,
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=100, ge=1, le=3000),
     hours: Optional[int] = Query(default=None, ge=1, le=168),
 ):
     """Retrieve historical monitoring metrics for a specific service."""

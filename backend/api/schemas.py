@@ -2,23 +2,36 @@
 Pydantic schemas for API request and response validation.
 """
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, Literal
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Service Schemas ---
 
 class ServiceCreate(BaseModel):
     service_name: str = Field(..., min_length=1, max_length=100, description="Human-readable name")
-    url: str = Field(..., description="Target endpoint URL (HTTP/HTTPS)")
-    http_method: str = Field(default="GET", description="HTTP method: GET, POST, HEAD")
+    url: str = Field(..., max_length=2048, description="Target endpoint URL (HTTP/HTTPS)")
+    http_method: Literal["GET", "HEAD"] = "GET"
     expected_status_code: int = Field(default=200, ge=100, le=599)
     check_interval: int = Field(default=60, ge=10, le=3600, description="Check interval in seconds")
-    timeout: int = Field(default=10, ge=1, le=60, description="Request timeout in seconds")
+    timeout: int = Field(default=10, ge=1, le=10, description="Request timeout in seconds")
     response_time_threshold: float = Field(default=2000.0, gt=0, description="Alert threshold (ms)")
     error_threshold: float = Field(default=0.05, ge=0.0, le=1.0, description="Error rate threshold (0-1)")
     is_active: bool = Field(default=True)
-    tags: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list, max_length=25)
+    dependencies: List[str] = Field(default_factory=list, max_length=25)
+    criticality: Literal["standard", "critical"] = "standard"
+    failure_threshold: int = Field(default=3, ge=1, le=20)
+    recovery_threshold: int = Field(default=2, ge=1, le=20)
+    availability_target: float = Field(default=99.9, gt=0, le=100)
+    latency_target_ms: float = Field(default=500, gt=0)
+    error_rate_target: float = Field(default=0.01, ge=0, le=1)
+
+    @field_validator("url")
+    @classmethod
+    def valid_target(cls, value):
+        from backend.utils.targets import validate_target
+        return validate_target(value)
 
 
 class ServiceUpdate(BaseModel):
@@ -32,6 +45,13 @@ class ServiceUpdate(BaseModel):
     error_threshold: Optional[float] = None
     is_active: Optional[bool] = None
     tags: Optional[List[str]] = None
+    dependencies: Optional[List[str]] = None
+    criticality: Optional[Literal["standard", "critical"]] = None
+    failure_threshold: Optional[int] = None
+    recovery_threshold: Optional[int] = None
+    availability_target: Optional[float] = None
+    latency_target_ms: Optional[float] = None
+    error_rate_target: Optional[float] = None
 
 
 class ServiceResponse(BaseModel):
@@ -81,8 +101,8 @@ class TimeSeriesQuery(BaseModel):
 # --- Incident Schemas ---
 
 class IncidentUpdate(BaseModel):
-    status: Optional[str] = Field(None, description="OPEN, INVESTIGATING, RESOLVED, CLOSED")
-    resolution_notes: Optional[str] = None
+    status: Optional[Literal["ACKNOWLEDGED", "INVESTIGATING", "MITIGATING", "RESOLVED", "CLOSED"]] = None
+    resolution_notes: Optional[str] = Field(default=None, max_length=2000)
     assigned_to: Optional[str] = None
 
 
@@ -140,6 +160,7 @@ class SystemOverviewResponse(BaseModel):
     down_services: int
     active_incidents: int
     average_response_time_ms: float
-    overall_availability_percentage: float
-    system_health_score: float
+    overall_availability_percentage: Optional[float]
+    unknown_services: int = 0
+    system_health_score: Optional[float]
     last_updated: str

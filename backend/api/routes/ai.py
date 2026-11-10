@@ -5,7 +5,6 @@ Supports AI incident re-analysis, assistant Q&A chat, and ML model retraining.
 
 from typing import List, Optional
 import json
-import random
 import re
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query, status
@@ -106,6 +105,7 @@ def _build_chat_context(payload):
                     "anomaly_score",
                     "risk_score",
                     "risk_level",
+                    "ml_status",
                 )
                 if key in latest
             }
@@ -171,6 +171,8 @@ def _build_chat_context(payload):
             "are available for this answer. Missing values were not supplied."
         ),
     }
+    from backend.ai.tools import operational_context
+    context["operational_data"] = operational_context(services, payload.query)
     source_ids = list(dict.fromkeys(
         [service["service_id"] for service in service_context if service.get("service_id")]
         + [incident["incident_id"] for incident in incident_context if incident.get("incident_id")]
@@ -225,21 +227,24 @@ async def ai_assistant_chat(payload: AIChatRequest):
 
     try:
         provider = get_ai_provider()
-        answer = await provider.chat([
-            {"role": "system", "content": MONITORING_ASSISTANT_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {payload.query}\n\n"
-                    "Authoritative application context (JSON):\n"
-                    f"{json.dumps(context, ensure_ascii=True, default=str)}"
-                ),
-            },
-        ])
+        from backend.ai.grounding import build_facts, render_answer
+        facts = build_facts(context)
+        prompt = json.dumps({"question": payload.query, "facts": facts, "context": context}, default=str)
+        if len(prompt) > 60000:
+            # Retain verified summary facts; do not send an unbounded history to the LLM.
+            prompt = json.dumps({"question": payload.query, "facts": facts, "limitations": "Detailed context omitted to enforce the AI input budget; use only these facts."})
+        response = await provider.analyze(
+            system_prompt=MONITORING_ASSISTANT_SYSTEM_PROMPT + '\nReturn JSON with fact_ids (select relevant IDs from supplied facts), possible_causes (unconfirmed hypotheses only), recommended_actions (diagnostic checks). Never put numbers, measurements, counts, or factual conclusions in generated prose. For ranking/count questions use fact_ids only. A missing model means not assessed, never normal. Do not invent facts or references.',
+            user_prompt=prompt,
+        )
+        try:
+            answer = render_answer(response, facts)
+        except ValueError as exc:
+            raise HTTPException(502, "AI returned unsupported evidence references; retry the question") from exc
     except AIProviderError as exc:
         logger.warning(
             "AI chat provider request failed.",
-            extra={"provider": exc.provider, "recoverable": exc.recoverable},
+            extra={"provider": exc.provider, "recoverable": exc.recoverable, "action": "ai_chat_failure"},
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -275,7 +280,7 @@ async def trigger_incident_analysis(payload: TriggerAnalysisRequest):
 
     mon_repo = MonitoringRepository()
     service_id = incident.get("service_id")
-    latest_record = mon_repo.get_latest_record(service_id) or {
+    latest_record = incident.get("metrics_snapshot") or {
         "service_id": service_id,
         "response_time": incident.get("metrics_snapshot", {}).get("response_time", 0),
         "status_code": incident.get("metrics_snapshot", {}).get("status_code", 200),
@@ -288,7 +293,7 @@ async def trigger_incident_analysis(payload: TriggerAnalysisRequest):
     hist_metrics = compute_historical_metrics(historical)
 
     ml_analysis = {
-        "anomaly": True if incident.get("anomaly_score", 0) > 0.5 else False,
+        "anomaly": incident.get("detection_source") == "ml",
         "anomaly_score": incident.get("anomaly_score", 0),
         "risk_level": incident.get("risk_level", "MEDIUM"),
     }
@@ -299,6 +304,12 @@ async def trigger_incident_analysis(payload: TriggerAnalysisRequest):
         historical_metrics=hist_metrics,
         ml_analysis=ml_analysis,
     )
+    from backend.database.concurrency import mutate
+    from backend.lifecycle import event, utcnow
+    def record_result(item):
+        item.update(ai_status=analysis.get("analysis_status", "unavailable"), ai_confidence=analysis.get("confidence", "low"), likely_cause=analysis.get("possible_causes", []))
+        item["timeline"] = (item.get("timeline", []) + [event("AI_REANALYSIS_" + item["ai_status"].upper(), utcnow(), "administrator")])[-200:]
+    mutate(incident_repo.table, {"incident_id": payload.incident_id}, record_result)
 
     return analysis
 
@@ -317,34 +328,17 @@ def retrain_service_model(service_id: str):
     mon_repo = MonitoringRepository()
     records = mon_repo.get_historical_records(service_id, hours=72)
     
-    # If not enough historical samples, generate baseline telemetry samples
-    if len(records) < 20:
-        now = datetime.now(timezone.utc)
-        for i in range(25 - len(records)):
-            ts = (now - timedelta(minutes=15 * (25 - i))).isoformat()
-            synth_record = {
-                "service_id": service_id,
-                "service_name": service.get("service_name", ""),
-                "url": service["url"],
-                "timestamp": ts,
-                "status_code": service.get("expected_status_code", 200),
-                "response_time": round(random.uniform(90.0, 220.0), 2),
-                "availability": 1,
-                "error": 0,
-                "error_rate": 0.0,
-                "timeout": 0,
-                "request_success": 1,
-            }
-            mon_repo.store_monitoring_record(synth_record)
-            records.append(synth_record)
+    from backend.ml.train import retrain_service
+    result = retrain_service(service_id, records)
+    if result["status"] != "trained":
+        raise HTTPException(status_code=409, detail=result)
+    return {"status": "trained", "sample_count": result["samples"], "model_result": result}
 
-    result = train_model(service_id, records)
-    return {
-        "status": "success",
-        "message": f"Isolation Forest model successfully trained for {service.get('service_name', service_id)}",
-        "sample_count": len(records),
-        "model_result": result,
-    }
+
+@router.get("/models/{service_id}", response_model=dict)
+def get_model_metadata(service_id: str):
+    from backend.ml.model_manager import ModelManager
+    return ModelManager().get_metadata(service_id) or {"status": "no_model"}
 
 
 @router.get("/analyses", response_model=List[dict])

@@ -3,7 +3,7 @@ Incidents API router — Incident triage, detail views, and resolution.
 """
 
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Request
 
 from backend.database.incident_repository import IncidentRepository
 from backend.database.ai_repository import AIAnalysisRepository
@@ -32,6 +32,8 @@ def list_incidents(
 
     if severity:
         incidents = [i for i in incidents if i.get("severity") == severity]
+    if status_filter:
+        incidents = [i for i in incidents if i.get("status") == status_filter]
 
     return incidents
 
@@ -58,7 +60,7 @@ def get_incident(incident_id: str):
 
 
 @router.patch("/{incident_id}", response_model=dict)
-def update_incident(incident_id: str, payload: IncidentUpdate):
+def update_incident(incident_id: str, payload: IncidentUpdate, request: Request):
     """Update incident status (e.g. acknowledge or resolve)."""
     repo = IncidentRepository()
     incident = repo.get_incident(incident_id)
@@ -71,12 +73,17 @@ def update_incident(incident_id: str, payload: IncidentUpdate):
     update_fields = {k: v for k, v in payload.model_dump().items() if v is not None}
     
     if "status" in update_fields:
-        updated = repo.update_incident_status(
-            incident_id=incident_id,
-            status=update_fields["status"],
-            resolution_notes=update_fields.get("resolution_notes"),
-        )
+        from backend.lifecycle import operator_transition
+        try:
+            updated = operator_transition(incident_id, update_fields["status"], request.state.actor, update_fields.get("resolution_notes", ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     else:
-        updated = repo.update_incident(incident_id, update_fields)
+        from backend.database.concurrency import mutate
+        from backend.lifecycle import event, utcnow
+        def annotate(item):
+            item.update(update_fields)
+            item["timeline"] = (item.get("timeline", []) + [event("OPERATOR_NOTE", utcnow(), request.state.actor, update_fields.get("resolution_notes", ""))])[-200:]
+        updated, _ = mutate(repo.table, {"incident_id": incident_id}, annotate)
 
     return updated

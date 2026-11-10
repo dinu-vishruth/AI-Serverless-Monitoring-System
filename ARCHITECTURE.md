@@ -1,73 +1,74 @@
-# System Architecture & Technical Specifications
+﻿# ISMS architecture
 
-## 1. System Data Flow
+The before-change audit is in AUDIT.md. This describes implemented behavior.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant EB as Amazon EventBridge
-    participant HC as Health Checker Lambda
-    participant Target as Target Endpoint
-    participant DDB as DynamoDB (MonitoringData)
-    participant ML as ML Isolation Forest Engine
-    participant Risk as Multi-Factor Risk Engine
-    participant LLM as Generative AI Provider
-    participant SNS as Amazon SNS
-    participant Dash as React Dashboard
-
-    EB->>HC: Trigger Check (every 1m)
-    HC->>Target: HTTP GET /health
-    Target-->>HC: HTTP 200/500 + Timing (ms)
-    HC->>DDB: Persist Raw Metrics
-    HC->>ML: Extract Features & Evaluate Anomaly
-    ML-->>HC: Anomaly Score [0.0 – 1.0]
-    HC->>Risk: Calculate Weighted Multi-Factor Risk
-    Risk-->>HC: Risk Score [0 – 100] & Severity
-    alt Risk is HIGH or CRITICAL
-        HC->>LLM: Dispatch Evidence (Telemetry + CloudWatch + Anomaly)
-        LLM-->>HC: Root Cause Explanation & Action Plan
-        HC->>SNS: Publish Intelligent Alert
-    end
-    Dash->>HC: Read Telemetry / Trigger On-Demand Check
+flowchart TD
+  UI[React/Vite] --> APIGW[HTTP API Gateway]
+  APIGW --> API[FastAPI / Mangum API Lambda]
+  API --> S[(Services)]
+  API --> M[(MonitoringData)]
+  API --> I[(Incidents)]
+  API --> A[(AIAnalysis)]
+  Schedule[EventBridge each minute] --> H[Health checker]
+  API --> H
+  H --> Endpoint[Public HTTP/S endpoint]
+  H --> M
+  H --> Model[Isolation Forest inference]
+  Model --> Bucket[(Versioned S3 models)]
+  H --> State[Deterministic lifecycle]
+  State --> S
+  State --> I
+  I --> Stream[DynamoDB stream]
+  Stream --> Analyzer[Incident analyzer]
+  Analyzer --> Groq[Groq]
+  Analyzer --> A
+  Analyzer --> SNS[SNS]
+  SNS --> Email[Confirmed email subscriber]
+  Daily[Daily EventBridge] --> Training[Historical model training]
+  Training --> Bucket
+  Stream --> Failures[SQS discarded events]
+  Schedule --> Failures
+  API --> Tools[Read-only assistant tools]
+  Tools --> Groq
 ```
 
-## 2. Multi-Factor Risk Scoring Formula
+Services retain registration settings, dependencies, SLO targets, latest lifecycle state, consecutive counts, last successful/failed checks, active incident pointer and a versioned concurrency lease. MonitoringData uses service ID + timestamp and a retention TTL. Incidents retain snapshots, severity/detector provenance, acknowledgement, timeline, notification attempts and downtime. AIAnalysis retains structured investigations and their evidence/provider/status. Data conversion is recursive and DynamoDB writes use Decimal values.
 
-The Risk Engine computes a composite score $S \in [0, 100]$ as follows:
+The local JSON adapter was fundamentally inconsistent with DynamoDB and swallowed write errors. It is replaced by an explicitly selected SQLite adapter with atomic conditional writes. The original JSON file is preserved. AWS clients use bounded timeouts and standard backoff; production initialization/storage errors propagate as platform failures.
 
-$$S = \sum_{i=1}^{5} w_i \cdot f_i$$
+The same canonical check runs on manual and scheduled invocation. It acquires a per-service lease, validates/resolves/pins the target, performs the probe, loads the bounded prior baseline, optionally runs ML, persists telemetry and processes the lifecycle. ML errors cannot skip deterministic failure detection. Replay timestamps are ignored. Versioned conditional writes reject concurrent updates; a consistent service incident pointer avoids relying only on eventually consistent indexes. Scheduled replays skip services not due for another check. Function budget checks leave unchecked services due for subsequent invocation.
 
-Where:
-- $w_1 = 0.25$ (Response time vs. static threshold breach ratio)
-- $w_2 = 0.15$ (Latency deviation from historical moving average $\mu + 2\sigma$)
-- $w_3 = 0.25$ (Error rate percentage $0.0 \to 1.0$)
-- $w_4 = 0.20$ (Availability binary failure penalty)
-- $w_5 = 0.15$ (Isolation Forest outlier anomaly score)
+```mermaid
+stateDiagram-v2
+  [*] --> HEALTHY
+  HEALTHY --> SUSPECTED_FAILURE: failed probe
+  HEALTHY --> DEGRADED: latency or model deviation
+  SUSPECTED_FAILURE --> HEALTHY: healthy before confirmation
+  DEGRADED --> HEALTHY: deviation clears
+  SUSPECTED_FAILURE --> CONFIRMED_INCIDENT: repeated failures
+  DEGRADED --> CONFIRMED_INCIDENT: sustained deviations / measured high errors
+  CONFIRMED_INCIDENT --> ACKNOWLEDGED: authenticated operator
+  ACKNOWLEDGED --> INVESTIGATING
+  INVESTIGATING --> MITIGATING
+  CONFIRMED_INCIDENT --> RECOVERED: clean probe
+  INVESTIGATING --> RECOVERED: clean probe
+  MITIGATING --> RECOVERED: clean probe
+  RECOVERED --> CONFIRMED_INCIDENT: failure recurs
+  RECOVERED --> RESOLVED: enough clean checks
+  RESOLVED --> CLOSED: operator archives
+```
 
-### Severity Classification:
-- **LOW**: $S < 30$
-- **MEDIUM**: $30 \le S < 60$
-- **HIGH**: $60 \le S < 80$
-- **CRITICAL**: $S \ge 80$
+Observed service state and operator incident state are related but separate: acknowledgement does not make a service healthy. Downtime begins with the observed failure episode, ends with verified resolution, and is bounded by probe cadence. Sustained error-rate detection uses recent probe windows; it does not infer application traffic error rates.
 
-## 3. DynamoDB Data Models
+A dedicated incident stream worker performs notification and AI work asynchronously. It uses an incident processing lease and ignores lease/AI-only stream updates. Failed stream processing is retried and discarded records go to SQS. SNS creation is independent of provider availability. No extra incident is created while the active incident remains unresolved. Local mode invokes the same worker directly after checks.
 
-### `Services` Table
-- **Partition Key**: `service_id` (String UUID)
-- **Attributes**: `service_name`, `url`, `http_method`, `expected_status_code`, `check_interval`, `timeout`, `response_time_threshold`, `error_threshold`, `is_active`, `tags`, `created_at`, `updated_at`
+The previous untriggered detector Lambda is retained as a daily historical training worker. Versioned S3 artifacts make trained models available to API and checker cold starts. Model promotion happens after validation/serialization/upload. See ML.md for statistical limits and retraining policy.
 
-### `MonitoringData` Table
-- **Partition Key**: `service_id` (String UUID)
-- **Sort Key**: `timestamp` (ISO 8601 UTC String)
-- **Attributes**: `status_code`, `response_time`, `availability`, `error`, `error_rate`, `timeout`, `request_success`, `ttl`
+Dependency correlation is graph traversal over declared relationships plus observed incidents/metrics. It cannot prove causal direction without supporting application evidence. Logs and deployment events are marked unavailable because no ingestion path for those sources is implemented.
 
-### `Incidents` Table
-- **Partition Key**: `incident_id` (String `inc-{timestamp}`)
-- **GSI (`ServiceIndex`)**: PK `service_id`, SK `created_at`
-- **Attributes**: `severity`, `status`, `trigger_reason`, `anomaly_score`, `risk_score`, `risk_level`, `metrics_snapshot`, `resolved_at`, `resolution_notes`
+Security: generated administrator secret, exact configured CORS origins, public-address probe validation and pinned resolution, default TLS validation, read-only assistant retrieval and fixed runbooks. IAM limits operations to the specific tables, indexes, bucket, secrets and topic used by each function. Shared administrator identity is appropriate for a small demo; individual SSO/RBAC is not implemented.
 
-### `AIAnalysis` Table
-- **Partition Key**: `analysis_id` (String `ai-{timestamp}`)
-- **GSI (`IncidentIndex`)**: PK `incident_id`, SK `timestamp`
-- **GSI (`ServiceIndex`)**: PK `service_id`, SK `timestamp`
-- **Attributes**: `incident_summary`, `observed_facts`, `possible_causes`, `impact`, `recommended_actions`, `confidence`, `risk_level`, `risk_score`
+Operational cost controls: one-minute polling with due filtering, daily retraining, on-demand DynamoDB, telemetry TTL, fourteen-day logs, bounded context and one investigation per new incident. CloudWatch monitors Lambda errors and structured platform failure events, and alarms on retained failed events. The original project has no managed frontend hosting resource; deploy its Vite build to an appropriate existing static host or run it locally against the cloud API.
+
+References: [SAM DynamoDB stream configuration](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-dynamodb.html), [SAM custom dependency-layer builds](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/building-layers.html), [EventBridge delivery failure configuration](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-scheduledeadletterconfig.html).

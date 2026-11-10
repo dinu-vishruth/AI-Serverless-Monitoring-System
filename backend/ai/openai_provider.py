@@ -23,13 +23,16 @@ class OpenAIProvider(AIProvider):
     def __init__(self):
         settings = get_settings()
         api_key = getattr(settings, self.api_key_setting)
+        if self.provider_id == "groq" and settings.groq_secret_arn:
+            from backend.utils.security import read_secret
+            api_key = read_secret(settings.groq_secret_arn)
         if not api_key:
             raise AIProviderError(
                 f"{self.api_key_setting.upper()} environment variable is not set",
                 provider=self.provider_id,
                 recoverable=False,
             )
-        client_options = {"api_key": api_key}
+        client_options = {"api_key": api_key, "timeout": 12.0, "max_retries": 1}
         if self.api_base_url:
             client_options["base_url"] = self.api_base_url
         self.client = AsyncOpenAI(**client_options)
@@ -103,9 +106,7 @@ class OpenAIProvider(AIProvider):
             try:
                 result = json.loads(content)
             except json.JSONDecodeError:
-                logger.warning(
-                    f"Failed to parse {self.provider_label} response as JSON: {content[:200]}"
-                )
+                logger.warning("Provider response was not valid JSON")
                 # Attempt to extract JSON from the response
                 result = self._extract_json(content)
 

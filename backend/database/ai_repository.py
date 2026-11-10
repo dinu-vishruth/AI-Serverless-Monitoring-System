@@ -56,6 +56,7 @@ class AIAnalysisRepository:
         """Stores an AI analysis result."""
         now = datetime.now(timezone.utc).isoformat()
         item = {
+            **analysis,
             "analysis_id": analysis.get("analysis_id", f"AI-{uuid.uuid4().hex[:8].upper()}"),
             "incident_id": analysis.get("incident_id", ""),
             "service_id": analysis["service_id"],
@@ -131,3 +132,6 @@ class AIAnalysisRepository:
         items = response.get("Items", [])
         items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
         return [_from_decimal(item) for item in items]
+
+    get_analyses_by_service = get_service_analyses
+    list_recent_analyses = get_recent_analyses

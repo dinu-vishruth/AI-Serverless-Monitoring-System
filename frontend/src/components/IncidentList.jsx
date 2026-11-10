@@ -10,7 +10,7 @@ export default function IncidentList({
     return (
       <div className="card" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
         <CheckCheck size={40} color="var(--accent-healthy)" style={{ margin: '0 auto 1rem' }} />
-        <h3 style={{ marginBottom: '0.5rem' }}>All Systems Operating Normally</h3>
+        <h3 style={{ marginBottom: '0.5rem' }}>No incidents in the loaded results</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
           No open alerts or predictive degradation detected across any services.
         </p>
@@ -26,7 +26,7 @@ export default function IncidentList({
             <th>Incident & Target</th>
             <th>Severity</th>
             <th>Trigger Cause</th>
-            <th>AI Risk Score</th>
+            <th>Heuristic Risk Score</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -85,7 +85,7 @@ export default function IncidentList({
                       <button
                         className="btn btn-secondary btn-icon-only"
                         onClick={() => onResolveIncident(inc.incident_id)}
-                        title="Mark as resolved"
+                        title="Acknowledge incident"
                       >
                         <CheckCheck size={14} color="var(--accent-healthy)" />
                       </button>

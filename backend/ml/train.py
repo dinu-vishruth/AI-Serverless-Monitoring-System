@@ -61,7 +61,7 @@ def train_model(
         contamination = settings.ml_contamination
 
     # Validate and clean records
-    valid_records = validate_records(records)
+    valid_records = [r for r in validate_records(records) if r["service_id"] == service_id]
 
     if len(valid_records) < MIN_TRAINING_SAMPLES:
         logger.warning(
@@ -93,11 +93,25 @@ def train_model(
         random_state=42,
         n_jobs=-1,
     )
-    model.fit(features)
+    split = max(16, int(len(features) * 0.8))
+    training, validation = features[:split], features[split:]
+    model.fit(training)
+    scores = model.decision_function(validation)
+    if not len(scores) or not np.isfinite(scores).all():
+        return {"status": "evaluation_failed", "service_id": service_id}
+    evaluation = {
+        "method": "chronological_holdout_unlabeled",
+        "training_count": len(training), "validation_count": len(validation),
+        "holdout_anomaly_rate": float(np.mean(scores < 0)),
+        "mean_decision_score": float(np.mean(scores)),
+        "limitations": "Unlabeled data; accuracy, precision and recall cannot be calculated.",
+    }
+    if evaluation["holdout_anomaly_rate"] >= .9:
+        return {"status": "evaluation_failed", "service_id": service_id, "evaluation": evaluation}
 
     # Save model
     manager = ModelManager()
-    model_path = manager.save_model(service_id, model, len(features))
+    model_path = manager.save_model(service_id, model, len(features), evaluation=evaluation)
 
     return {
         "status": "trained",
@@ -105,4 +119,20 @@ def train_model(
         "samples": len(features),
         "model_path": model_path,
         "contamination": contamination,
+        "metadata": manager.get_metadata(service_id),
     }
+
+
+def retrain_service(service_id, records):
+    """Record every training attempt without replacing a failed candidate."""
+    from backend.database.service_repository import ServiceRepository
+    from backend.database.concurrency import mutate
+    from backend.lifecycle import utcnow
+    result = {"status": "failed", "service_id": service_id}
+    try:
+        result = train_model(service_id, records)
+        return result
+    finally:
+        attempt = {k: v for k, v in result.items() if k != "model_path"}
+        attempt["attempted_at"] = utcnow()
+        mutate(ServiceRepository().table, {"service_id": service_id}, lambda s: s.update(last_training_result=attempt))

@@ -62,6 +62,9 @@ async def analyze_incident(
         },
         "trigger_reason": incident.get("trigger_reason", ""),
     }
+    from backend.operations import correlation
+    evidence["correlation"] = correlation(incident)
+    evidence["incident"] = {k: incident.get(k) for k in ("incident_id", "created_at", "severity", "detection_source", "failure_count", "model_version")}
 
     if historical_metrics:
         evidence["historical_baseline"] = {
@@ -95,6 +98,16 @@ async def analyze_incident(
 
         # Validate response structure
         analysis_result = _validate_ai_response(ai_response)
+        # Facts are rendered from telemetry, not accepted as generated claims.
+        analysis_result["observed_facts"] = [
+            f"Observed HTTP status: {current_metrics.get('status_code')}",
+            f"Observed probe latency: {current_metrics.get('response_time')} ms",
+            f"Probe success: {current_metrics.get('request_success')}; probe availability: {current_metrics.get('availability')}",
+            f"Detector provenance: {incident.get('detection_source', 'unknown')}; model version: {incident.get('model_version')}",
+            "The exact root cause cannot be determined from health-check evidence alone.",
+        ]
+        analysis_result["analysis_status"] = "completed"
+        analysis_result["provider"] = provider.provider_name
 
     except AIProviderError as e:
         logger.warning(
@@ -118,6 +131,8 @@ async def analyze_incident(
     analysis_result["anomaly_score"] = ml_analysis.get("anomaly_score", 0) if ml_analysis else 0
     analysis_result["risk_score"] = incident.get("risk_score", 0)
     analysis_result["risk_level"] = incident.get("risk_level", "UNKNOWN")
+    analysis_result.setdefault("analysis_status", "unavailable")
+    analysis_result["evidence"] = evidence
 
     # Store in DynamoDB
     try:
@@ -125,13 +140,16 @@ async def analyze_incident(
         stored = repo.store_analysis(analysis_result)
         analysis_result["analysis_id"] = stored.get("analysis_id")
     except Exception as e:
-        logger.error(f"Failed to store AI analysis: {e}")
+        logger.error("Failed to store AI analysis", extra={"action": "platform_failure", "incident_id": incident_id})
+        raise
 
     return analysis_result
 
 
 def _validate_ai_response(response: dict) -> dict:
     """Validates and normalizes the AI response structure."""
+    if not isinstance(response, dict):
+        raise ValueError("AI response must be an object")
     required_fields = [
         "incident_summary",
         "observed_facts",
@@ -139,15 +157,21 @@ def _validate_ai_response(response: dict) -> dict:
         "impact",
         "recommended_actions",
         "confidence",
+        "next_diagnostic_checks",
     ]
 
+    if not isinstance(response.get("incident_summary"), str) or not response["incident_summary"].strip():
+        raise ValueError("Missing incident summary")
+    for name in ("observed_facts", "possible_causes", "impact", "recommended_actions"):
+        if not isinstance(response.get(name), list):
+            raise ValueError(f"Invalid AI field {name}")
     result = {}
     for field in required_fields:
         value = response.get(field)
         if field == "confidence":
             result[field] = value if value in ("low", "medium", "high") else "low"
         elif isinstance(value, list):
-            result[field] = [str(v) for v in value]
+            result[field] = [str(v)[:1500] for v in value[:20]]
         elif isinstance(value, str):
             result[field] = value if field == "incident_summary" else [value]
         else:

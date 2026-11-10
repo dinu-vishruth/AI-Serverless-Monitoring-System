@@ -48,6 +48,7 @@ class ServiceRepository:
         now = datetime.now(timezone.utc).isoformat()
         service_id = service.get("service_id") or generate_service_id(service.get("service_name", "svc"))
         item = {
+            **service,
             "service_id": service_id,
             "service_name": service.get("service_name", ""),
             "url": service["url"],
@@ -71,7 +72,7 @@ class ServiceRepository:
 
     def get_service(self, service_id: str) -> Optional[dict]:
         """Retrieves a service by ID."""
-        response = self.table.get_item(Key={"service_id": service_id})
+        response = self.table.get_item(Key={"service_id": service_id}, ConsistentRead=True)
         item = response.get("Item")
         return _from_dynamodb(item) if item else None
 
@@ -82,7 +83,7 @@ class ServiceRepository:
         while "LastEvaluatedKey" in response:
             response = self.table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
             items.extend(response.get("Items", []))
-        return [_from_dynamodb(item) for item in items]
+        return [_from_dynamodb(item) for item in items if item.get("item_kind") != "control"]
 
     def list_services(self) -> List[dict]:
         """Alias for get_all_services."""

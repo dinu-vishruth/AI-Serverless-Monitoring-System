@@ -1,0 +1,15 @@
+# Machine learning
+
+Isolation Forest remains the existing model. Deterministic HTTP/network failure detection runs separately. An HTTP 503 is not an ML prediction, and the anomaly score is not a probability of an outage.
+
+Ten features: response time, error rate, availability, normalized HTTP status, timeout, request success, prior rolling latency/error averages and change ratios. Chronological processing excludes the current observation from its baseline. Status codes are normalized; Isolation Forest does not require standard scaling of all features.
+
+Training reads actual service observations from the last 72 hours. Required fields must be finite and within their domains; samples marked synthetic are excluded and duplicate timestamps removed. Minimum: 20 valid samples. The first 80% (at least 16) trains the model; the remainder is chronological validation. Validation records mean decision score and outlier rate. A nonfinite result or at least 90% holdout outliers rejects promotion. This is an unlabeled diagnostic, not accuracy/precision/recall or proof of predictive quality.
+
+`POST /ai/retrain/{id}` returns 409 on insufficient data or rejected evaluation and never fabricates telemetry. Attempts are recorded on the service. The existing standalone detector Lambda is now explicitly a daily training worker; actual inference runs in the canonical health checker. It trains when no model exists, sufficiently more observations are available, or the model is at least one day old with sufficient recent data. The age condition supports sliding historical windows whose sample count stays constant. Operators can also retrain explicitly when drift warrants it.
+
+Each immutable artifact has a unique version, training timestamp, sample count, feature schema, sklearn version, threshold, checksum and evaluation. In AWS, S3 stores artifacts and immutable metadata, then publishes `active.json` last. Failed candidates leave the active pointer unchanged. S3 object versioning also preserves prior pointers. Cold starts download and checksum the active artifact; a missing model or incompatible schema/runtime skips inference explicitly. Only ISMS-produced artifacts in the trusted bucket may be loaded: joblib artifacts are executable serialization, not untrusted uploads.
+
+Local artifacts use `ML_MODEL_PATH`; cloud uses `/tmp/models` as a cache and `MODEL_BUCKET` for durability. The dependency layer pins sklearn/runtime versions so training and inference agree. Score mapping is `clamp(0.5 - decision_function, 0, 1)`; `ML_ANOMALY_THRESHOLD` defaults to 0.5. No-model observations have null score. Inference failures log a platform event and deterministic monitoring continues.
+
+The model detects unusual observed behavior. There is no supervised future-outage forecasting claim. Sustained latency deviations are degradation signals. Training uses a fixed random seed; inference logging records the service and score. The tests cover feature extraction, actual training/inference, S3 cold-cache loading, failed retraining preservation and ML-unavailable deterministic incidents.

@@ -1,0 +1,28 @@
+name: Verify ISMS
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install -r backend/requirements-lambda.txt pytest pytest-asyncio 'moto[dynamodb,sns,s3,secretsmanager]'
+      - run: python -m pytest -q
+        env:
+          ENVIRONMENT: test
+          LOCAL_MONITORING_ENABLED: 'false'
+      - run: npm ci && npm run build
+        working-directory: frontend
+      - uses: aws-actions/setup-sam@v2
+      - run: sam validate --lint --region ap-south-2
+      - run: sam build --use-container --region ap-south-2
+      - run: python scripts/verify_build.py

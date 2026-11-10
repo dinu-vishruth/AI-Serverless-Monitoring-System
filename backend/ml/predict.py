@@ -35,7 +35,7 @@ def predict_anomaly(
     service_id: str,
     record: dict,
     historical_records: Optional[list[dict]] = None,
-    threshold: float = ANOMALY_THRESHOLD,
+    threshold: Optional[float] = None,
 ) -> dict:
     """
     Predicts whether a monitoring record is anomalous.
@@ -50,6 +50,8 @@ def predict_anomaly(
         Dict with anomaly flag, score, and interpretation.
     """
     manager = ModelManager()
+    from backend.utils.config import get_settings
+    threshold = get_settings().ml_anomaly_threshold if threshold is None else threshold
     model = manager.load_model(service_id)
 
     if model is None:
@@ -61,7 +63,7 @@ def predict_anomaly(
             "service_id": service_id,
             "timestamp": record.get("timestamp", ""),
             "anomaly": False,
-            "anomaly_score": 0.0,
+            "anomaly_score": None,
             "status": "no_model",
             "interpretation": "No trained model available. Anomaly detection skipped.",
         }
@@ -96,6 +98,7 @@ def predict_anomaly(
         "threshold": threshold,
         "interpretation": interpretation,
         "status": "predicted",
+        "model_version": (manager.get_metadata(service_id) or {}).get("version"),
     }
 
     logger.info(

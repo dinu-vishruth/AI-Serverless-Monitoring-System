@@ -54,10 +54,11 @@ class IncidentRepository:
         """Creates a new incident."""
         now = datetime.now(timezone.utc).isoformat()
         item = {
+            **incident,
             "incident_id": incident["incident_id"],
             "service_id": incident["service_id"],
             "service_name": incident.get("service_name", ""),
-            "created_at": now,
+            "created_at": incident.get("created_at", now),
             "updated_at": now,
             "severity": incident.get("severity", "MEDIUM"),
             "status": incident.get("status", "OPEN"),
@@ -77,7 +78,7 @@ class IncidentRepository:
 
     def get_incident(self, incident_id: str) -> Optional[dict]:
         """Retrieves an incident by ID."""
-        response = self.table.get_item(Key={"incident_id": incident_id})
+        response = self.table.get_item(Key={"incident_id": incident_id}, ConsistentRead=True)
         item = response.get("Item")
         return _from_decimal(item) if item else None
 
@@ -102,18 +103,28 @@ class IncidentRepository:
             expr_values[":severity_val"] = severity
             expr_names["#severity_key"] = "severity"
 
-        scan_kwargs = {"Limit": limit}
-        if filter_parts:
-            scan_kwargs["FilterExpression"] = " AND ".join(filter_parts)
-            scan_kwargs["ExpressionAttributeValues"] = expr_values
-            scan_kwargs["ExpressionAttributeNames"] = expr_names
-
-        response = self.table.scan(**scan_kwargs)
-        items = response.get("Items", [])
+        scan_kwargs = {"Limit": 200}
+        conditions = []
+        if status:
+            conditions.append(Attr("status").eq(status))
+        if severity:
+            conditions.append(Attr("severity").eq(severity))
+        if conditions:
+            condition = conditions[0]
+            for part in conditions[1:]:
+                condition = condition & part
+            scan_kwargs["FilterExpression"] = condition
+        items = []
+        for _ in range(50):
+            response = self.table.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+            if not response.get("LastEvaluatedKey"):
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
         # Sort by created_at descending
         items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return [_from_decimal(item) for item in items]
+        return [_from_decimal(item) for item in items[:limit]]
 
     def get_service_incidents(self, service_id: str, limit: int = 20) -> list[dict]:
         """Gets incidents for a specific service using GSI."""
@@ -166,7 +177,7 @@ class IncidentRepository:
 
     def get_open_incidents(self, limit: int = 50) -> list[dict]:
         """Returns all open incidents."""
-        return self.get_incidents(status="OPEN", limit=limit)
+        return [i for i in self.get_incidents(limit=10000) if i.get("status") not in {"RESOLVED", "CLOSED"}][:limit]
 
     def get_incidents_by_service(self, service_id: str, limit: int = 20) -> list[dict]:
         """Alias for get_service_incidents."""
@@ -184,8 +195,8 @@ class IncidentRepository:
 
     def get_open_incident_for_service(self, service_id: str) -> Optional[dict]:
         """Checks if there's already an open incident for a service."""
-        incidents = self.get_service_incidents(service_id, limit=5)
+        incidents = self.get_service_incidents(service_id, limit=200)
         for inc in incidents:
-            if inc.get("status") == "OPEN":
+            if inc.get("status") not in {"RESOLVED", "CLOSED"}:
                 return inc
         return None

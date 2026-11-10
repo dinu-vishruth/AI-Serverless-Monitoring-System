@@ -1,150 +1,82 @@
-# Intelligent Serverless Monitoring System
+# Intelligent Serverless Monitoring System (ISMS)
 
-[![AWS Serverless](https://img.shields.io/badge/AWS-Serverless-orange.svg)](https://aws.amazon.com/serverless/)
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-61dafb.svg)](https://vitejs.dev/)
-[![Scikit-Learn](https://img.shields.io/badge/ML-Isolation%20Forest-F7931E.svg)](https://scikit-learn.org/)
+ISMS monitors real HTTP(S) endpoints with React/Vite, FastAPI on AWS Lambda, DynamoDB, EventBridge and SNS. Isolation Forest supplies optional anomaly evidence; Groq investigates incidents and selects verified facts for an operational assistant.
 
-An enterprise-grade, cloud-native serverless monitoring platform that extends traditional uptime checks with **Unsupervised Machine Learning Anomaly Detection (Isolation Forest)** and **Generative AI Root-Cause Explainability**.
+The existing repository was audited before changes. See [AUDIT.md](AUDIT.md) for the original execution paths, broken/mocked/missing features and target design, and [CHANGES.md](CHANGES.md) for grouped implementation evidence. No production rewrite or arbitrary command execution was introduced.
 
----
-
-## 🏛️ Architecture Overview
-
-The system extends the standard **EventBridge → Lambda → DynamoDB → CloudWatch → SNS** monitoring pipeline with an intelligent AI layer:
+## Implemented workflow
 
 ```mermaid
-graph TD
-    EB[Amazon EventBridge\nSchedule: 1 min] --> HC[Lambda: Health Checker]
-    HC -->|HTTP Probe| EXT[Monitored Services / APIs]
-    HC -->|Store Metrics| DDB_M[DynamoDB: MonitoringData]
-    HC -->|Structured Logs| CW[CloudWatch Logs]
-    
-    subgraph "AI Intelligence Layer"
-        HC --> ML_P[Feature Engineering\n& Isolation Forest]
-        ML_P --> RA[Multi-Factor Risk Engine\nScore 0–100]
-        RA -->|High Risk / Outlier| INC[DynamoDB: Incidents]
-        INC --> GAI[Generative AI Provider\nBedrock / OpenAI / Mock]
-        GAI --> AIDB[DynamoDB: AIAnalysis]
-    end
-
-    INC -->|Intelligent Alert| SNS[Amazon SNS\nContext-Rich Alert]
-    DASH[React + Vite Dashboard] --> API[FastAPI on Lambda\nvia Mangum]
-    API --> DDB_M
-    API --> INC
-    API --> AIDB
+flowchart LR
+  Schedule[EventBridge / manual check] --> Probe[Real HTTP probe]
+  Probe --> Metrics[(Timestamped DynamoDB metrics)]
+  Metrics --> ML[Optional Isolation Forest inference]
+  Probe --> Lifecycle[Failure hysteresis / incident deduplication]
+  ML --> Lifecycle
+  Lifecycle --> Incident[(Incident + timeline)]
+  Incident --> Worker[Incident stream worker]
+  Worker --> Groq[Groq investigation]
+  Worker --> SNS[SNS lifecycle notifications]
+  Incident --> UI[React operations dashboard]
+  UI --> Tools[Verified assistant data tools]
+  Tools --> Groq
+  Probe --> Recovery[Repeated clean checks]
+  Recovery --> Resolved[Resolved incident + recovery notification]
 ```
 
----
+Monitoring distinguishes HTTP status mismatch, timeout, DNS, connection and TLS errors. TLS verification stays enabled. Stateful checks prevent duplicate incidents and require verified recovery. Operators can acknowledge, investigate, mitigate, retry a probe and temporarily mute incident notifications. Dependencies, correlation timelines, measured reliability/SLOs, actual model retraining, a failure simulation service and platform alarms are connected to backend execution.
 
-## 🌟 Key Features
+ML anomalies are unusual observations, not predictions of future outages. HTTP 503 is deterministic failure detection. Insufficient data and missing models remain explicit. The assistant renders counts/measurements from backend facts and uses Groq for fact selection and unconfirmed investigation. Missing application logs/deployment telemetry are identified instead of invented.
 
-1. **Serverless Health Checker**: High-throughput, distributed HTTP/HTTPS health checks scheduled via Amazon EventBridge.
-2. **Isolation Forest Anomaly Detection**: Unsupervised multi-dimensional detection of subtle latency degradation, jitter, and abnormal error rate distribution without requiring labeled training datasets.
-3. **Multi-Factor Risk Scoring Engine**: Calculates predictive risk scores (0–100) combining threshold breaches, historical standard deviations, error spikes, and status code shifts.
-4. **Explainable AI Root-Cause Analysis**: Generates natural language incident summaries, observed telemetry facts, probable architectural causes, and step-by-step remediation plans.
-5. **Interactive SRE AI Assistant**: Natural language chat interface answering real-time telemetry queries and diagnosing operational bottlenecks.
-6. **Modern Dark Glassmorphic Dashboard**: Real-time telemetry charts, live on-demand checks, incident triage, and service management.
-7. **Graceful Degradation & Cost Optimization**: Monitoring continues seamlessly even if AI services fail; LLM calls are cost-optimized to trigger only on significant anomalies.
+## Local start
 
----
-
-## 📁 Repository Structure
-
-```
-├── backend/
-│   ├── ai/                      # LLM Provider abstraction & prompt engineering
-│   ├── api/                     # FastAPI route handlers & Pydantic schemas
-│   ├── database/                # DynamoDB repository implementations
-│   ├── lambdas/                 # Lambda functions (HealthChecker, AnomalyDetector, Analyzer)
-│   ├── ml/                      # Preprocessing, Isolation Forest training & risk engine
-│   ├── utils/                   # Config, JSON logging, input validation
-│   ├── requirements.txt         # Backend Python dependencies
-│   └── main.py                  # FastAPI application entrypoint & Mangum handler
-├── frontend/
-│   ├── src/                     # React + Vite application & custom CSS design system
-│   ├── package.json             # Frontend Node dependencies
-│   └── vite.config.js           # Vite development server & proxy config
-├── scripts/
-│   ├── seed_data.py             # Realistic telemetry & demo incident seeder
-├── tests/                       # Unit and integration tests
-├── template.yaml                # AWS SAM Infrastructure as Code template
-└── README.md
-```
-
----
-
-## 🚀 Quick Start (Local Development)
-
-### 1. Backend Setup
-
-The assistant uses Groq by default. Copy `.env.example` to `.env`, add your Groq API key as `GROQ_API_KEY`, and keep `AI_PROVIDER=groq`. The configured `openai/gpt-oss-120b` model replaces Groq's retired `llama-3.3-70b-versatile` model. Restart the backend after editing `.env`. In PowerShell, environment variables override `.env`; clear any stale overrides in the backend terminal before restarting:
+Use Python 3.11 for parity with Lambda and Node.js 20.19+ or 22.12+ for Vite. Copy `.env.example` to `.env`, set `GROQ_API_KEY`, and keep `AI_PROVIDER=groq`. The model is configurable through `GROQ_MODEL`. Restart after configuration changes. Process environment variables override `.env`; clear stale PowerShell `GROQ_API_KEY` / `GROQ_MODEL` overrides if needed.
 
 ```powershell
-Remove-Item Env:GROQ_API_KEY -ErrorAction SilentlyContinue
-Remove-Item Env:GROQ_MODEL -ErrorAction SilentlyContinue
-python -m uvicorn backend.main:app --reload --port 8001
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8001
 ```
 
-In local development, the backend automatically checks active services using each service's configured `check_interval`. This starts collecting fresh telemetry as soon as the backend runs. Set `LOCAL_MONITORING_ENABLED=false` in `.env` to disable local checks; deployed AWS monitoring is scheduled by EventBridge.
+Local development automatically checks active services according to their configured intervals. Set `LOCAL_MONITORING_ENABLED=false` to disable it. Local storage is explicitly SQLite (`.local_db.sqlite3`), separate from AWS; production database failures never silently switch to local storage. The original `.local_db.json` is retained; migrate it explicitly with `python scripts/migrate_local_data.py` if you need existing local records.
 
-```bash
-# Navigate to project root & create virtual environment
-python -m venv venv
-venv\Scripts\activate   # (Windows) or source venv/bin/activate (Linux/Mac)
-
-# Install dependencies
-pip install -r backend/requirements.txt
-
-# Run FastAPI backend
-python -m uvicorn backend.main:app --reload --port 8001
-```
-
-FastAPI Swagger Documentation will be accessible at: `http://127.0.0.1:8001/docs`
-
-### 2. Frontend Setup
-
-```bash
+```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Dashboard will be live at: `http://localhost:3000`
+Dashboard: http://localhost:3000. API docs: http://127.0.0.1:8001/docs. A configured `ADMIN_TOKEN` is required locally; otherwise local mode identifies actions as `local-operator`. Production always requires its managed administrator credential. Enter it into the dashboard access field; never embed it in a frontend build.
 
-### 3. Seed Demo Telemetry & Incidents
+On machines where Windows application control blocks native Python dependencies, run the same Python 3.11 runtime in Docker:
 
-In a separate terminal, populate sample services, historical latency series, and an AI-explained incident:
-
-```bash
-python scripts/seed_data.py
+```powershell
+docker build -f Dockerfile.test -t isms-test .
+docker run --rm -p 127.0.0.1:8001:8001 --env-file .env -e ENVIRONMENT=development -e DEMO_ENABLED=true -e ALLOW_PRIVATE_TARGETS=true isms-test python -m uvicorn backend.main:app --host 0.0.0.0 --port 8001
 ```
 
----
+Enable `DEMO_ENABLED=true` and development-only `ALLOW_PRIVATE_TARGETS=true` for a local demo. Run `python scripts/demo.py --require-ai` against the running backend. This generates real HTTP failures and recovery; it does not seed invented AI or telemetry. The old seed command now only registers an actual demo endpoint.
 
-## ☁️ AWS Cloud Deployment (SAM)
+## Deployment and verification
 
-Deploy the entire serverless infrastructure to AWS using AWS SAM:
+AWS region is **ap-south-2**. Start with [DEPLOYMENT.md](DEPLOYMENT.md). SAM manages the original four DynamoDB tables and Lambda/API architecture, plus a shared dependency layer, versioned model bucket, incident stream, failure queue, secrets and optional demo/email subscription. Existing fixed table names are retained for compatibility; use the existing stack when updating an installation.
 
-```bash
-# Build the SAM application
-sam build
-
-# Deploy with guided wizard
-sam deploy --guided
+```powershell
+sam validate --lint --region ap-south-2
+sam build --use-container --region ap-south-2
+sam deploy --guided --region ap-south-2
 ```
 
-This provisions:
-- 4 DynamoDB Tables (`Services`, `MonitoringData`, `Incidents`, `AIAnalysis`)
-- 4 Lambda Functions with Least-Privilege IAM Roles
-- Amazon EventBridge Scheduled Rule (1-minute invocation)
-- Amazon SNS Topic for Intelligent Alerts
-- HTTP API Gateway routing to the FastAPI backend
+The existing stack is deployed in ap-south-2. Actual scheduled monitoring, incident streams, Groq investigation/assistant, SNS creation/recovery publishing, model training and cold-start S3 inference passed cloud acceptance; see [TESTING.md](TESTING.md). A production-API dashboard build is available locally at http://127.0.0.1:3001. Public frontend hosting and visual browser acceptance remain pending. SNS has no email subscription yet; a successful publish is distinct from subscription confirmation and actual inbox receipt.
 
----
+## Documentation
 
-## 🧪 Running Tests
+- [Architecture and lifecycle](ARCHITECTURE.md)
+- [API and authorization](API.md)
+- [Deployment](DEPLOYMENT.md)
+- [Operations, troubleshooting and demonstration](OPERATIONS.md)
+- [AI grounding and limitations](AI.md)
+- [ML training and inference](ML.md)
+- [Tests and verification status](TESTING.md)
 
-```bash
-python -m unittest discover tests
-```
+The system is designed for a small, cost-conscious monitoring deployment. Read/query caps, at-least-once notifications, shared administrator identity, and sampled rather than customer-traffic SLOs are documented limitations.

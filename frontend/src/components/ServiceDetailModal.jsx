@@ -8,6 +8,9 @@ export default function ServiceDetailModal({ service, onClose, onRefreshList }) 
   const [loading, setLoading] = useState(true);
   const [retraining, setRetraining] = useState(false);
   const [retrainMsg, setRetrainMsg] = useState(null);
+  const [model, setModel] = useState(null);
+  const [reliability, setReliability] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (service?.service_id) {
@@ -20,8 +23,12 @@ export default function ServiceDetailModal({ service, onClose, onRefreshList }) 
     try {
       const data = await api.getServiceRecords(service.service_id, 24);
       setRecords(data);
+      setModel(await api.getModel(service.service_id));
+      setReliability(await api.getReliability(service.service_id));
+      setError(null);
     } catch (err) {
       console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -33,6 +40,7 @@ export default function ServiceDetailModal({ service, onClose, onRefreshList }) 
     try {
       const res = await api.retrainModel(service.service_id);
       setRetrainMsg(`Model retrained successfully (${res.sample_count || records.length} samples)`);
+      setModel(await api.getModel(service.service_id));
     } catch (err) {
       setRetrainMsg(`Retraining: ${err.message}`);
     } finally {
@@ -58,6 +66,10 @@ export default function ServiceDetailModal({ service, onClose, onRefreshList }) 
         </div>
 
         {/* Telemetry Chart */}
+        {loading && <p role="status">Loading observed telemetry…</p>}
+        {error && <p className="error-banner" role="alert">{error}</p>}
+        {reliability && <div className="reliability-grid">{Object.entries(reliability).filter(([key]) => ['availability_percentage','error_rate','p50_ms','p95_ms','p99_ms','mttr_seconds','mtbf_seconds','error_budget_remaining_percentage','slo_compliant'].includes(key)).map(([key, value]) => <div key={key}><small>{key.replaceAll('_', ' ')}</small><strong>{value == null ? 'Insufficient data' : String(typeof value === 'number' ? Math.round(value * 100) / 100 : value)}</strong></div>)}</div>}
+        {model && <p className="model-metadata">Model: {model.version || model.status} · {model.training_samples ?? 0} samples · threshold {model.threshold ?? '—'} · {model.trained_at || 'No training timestamp'}</p>}
         <div style={{ marginBottom: '1.5rem' }}>
           <MetricsChart records={records} threshold={service.response_time_threshold || 2000} />
         </div>
@@ -126,7 +138,7 @@ export default function ServiceDetailModal({ service, onClose, onRefreshList }) 
                     {r.anomaly ? (
                       <span className="badge badge-critical" style={{ fontSize: '0.65rem' }}>Anomaly</span>
                     ) : (
-                      <span style={{ color: 'var(--text-muted)' }}>Normal</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{r.ml_status === 'predicted' ? 'Normal' : r.ml_status || 'Not evaluated'}</span>
                     )}
                   </td>
                 </tr>

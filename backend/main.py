@@ -54,21 +54,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 @app.middleware("http")
 async def add_process_time_and_log(request: Request, call_next):
     """Logs HTTP request lifecycle and timing."""
     start_time = time.time()
-    response = await call_next(request)
+    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        from backend.utils.security import authenticate
+        try:
+            actor = authenticate(request.headers.get("authorization", ""))
+        except Exception:
+            logger.exception("Authorization backend failed", extra={"action": "platform_failure"})
+            return JSONResponse(status_code=503, content={"detail": "Authorization temporarily unavailable"})
+        if not actor:
+            return JSONResponse(status_code=401, content={"detail": "Administrator bearer token required"}, headers={"WWW-Authenticate": "Bearer"})
+        request.state.actor = actor
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("API operation failed", extra={"action": "platform_failure"})
+        return JSONResponse(status_code=503, content={"detail": "ISMS platform operation failed; inspect platform logs"})
     process_time = (time.time() - start_time) * 1000
     response.headers["X-Process-Time-Ms"] = f"{process_time:.2f}"
     return response
@@ -80,6 +84,18 @@ app.include_router(monitoring_router, prefix="/api/v1")
 app.include_router(incidents_router, prefix="/api/v1")
 app.include_router(ai_router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
+from backend.api.routes.operations import router as operations_router
+app.include_router(operations_router, prefix="/api/v1")
+
+
+@app.get("/demo/health", include_in_schema=False)
+def demo_health():
+    if not settings.demo_enabled:
+        return JSONResponse(status_code=404, content={"detail": "Demo disabled"})
+    from backend.demo import handler as demo_handler
+    import json
+    result = demo_handler({}, None)
+    return JSONResponse(status_code=result["statusCode"], content=json.loads(result["body"]))
 
 
 @app.get("/health", tags=["System"])
@@ -103,6 +119,12 @@ def root():
         "health": "/health",
         "version": "1.0.0",
     }
+
+
+# CORS wraps authentication errors as well as successful route responses.
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins_list,
+    allow_credentials=False, allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"])
 
 
 # Mangum handler for AWS Lambda (API Gateway HTTP/REST proxy)

@@ -5,15 +5,18 @@ import { api } from '../services/api';
 export default function AIIncidentDrawer({ incident, onClose, onAskAssistant }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(incident?.ai_analysis || null);
+  const [error, setError] = useState(null);
 
   async function handleReanalyze() {
     if (!incident) return;
     setAnalyzing(true);
+    setError(null);
     try {
       const result = await api.analyzeIncident(incident.incident_id);
       setAnalysis(result);
     } catch (err) {
       console.error('Analysis failed', err);
+      setError(err.message);
     } finally {
       setAnalyzing(false);
     }
@@ -70,7 +73,7 @@ export default function AIIncidentDrawer({ incident, onClose, onAskAssistant }) 
             </div>
           </div>
           <div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>AI Risk Score</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Heuristic Risk Score</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--accent-critical)' }}>
               {incident.risk_score || 0}/100
             </div>
@@ -78,6 +81,8 @@ export default function AIIncidentDrawer({ incident, onClose, onAskAssistant }) 
         </div>
 
         {/* AI Analysis Content */}
+        {error && <p className="error-banner" role="alert">{error}</p>}
+        {currentAnalysis && <p>Analysis: {currentAnalysis.analysis_status || 'unknown'} · Provider: {currentAnalysis.provider || 'No model inference'} · Confidence: {currentAnalysis.confidence || 'unknown'}</p>}
         {currentAnalysis ? (
           <div>
             {/* Summary */}
@@ -117,7 +122,7 @@ export default function AIIncidentDrawer({ incident, onClose, onAskAssistant }) 
             {currentAnalysis.possible_causes?.length > 0 && (
               <div style={{ marginBottom: '1.5rem' }}>
                 <h4 style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-                  Probable Root Causes
+                  Possible causes · unconfirmed
                 </h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                   {currentAnalysis.possible_causes.map((cause, i) => (

@@ -1,16 +1,40 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  Intelligent Serverless Monitoring System.
-  Extends EventBridge -> Lambda -> DynamoDB -> CloudWatch -> SNS with Isolation Forest anomaly detection and LLM-powered incident explanation.
+Description: 'Intelligent Serverless Monitoring System. Extends EventBridge -> Lambda
+  -> DynamoDB -> CloudWatch -> SNS with Isolation Forest anomaly detection and LLM-powered
+  incident explanation.
 
+  '
 Parameters:
   GroqApiKey:
     Type: String
     NoEcho: true
-    MinLength: 1
-    Description: Groq API key used by the monitoring assistant.
-
+    MinLength: 0
+    Description: Optional legacy key; prefer GroqSecretArn. Never commit a real key.
+    Default: ''
+  GroqSecretArn:
+    Type: String
+    Default: ''
+    Description: Existing Secrets Manager secret ARN, plain API key or JSON api_key
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email recipient; SNS confirmation is required
+  CorsOrigins:
+    Type: String
+    Default: http://localhost:3000
+    Description: Comma-separated permitted dashboard origins
+  EnableDemo:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  WorkerReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Optional reservation per scheduled worker; leave zero for accounts with a small concurrency quota
 Globals:
   Function:
     Timeout: 30
@@ -19,143 +43,171 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        ENVIRONMENT: 'production'
-        MONITORING_TABLE: !Ref MonitoringDataTable
-        AI_ANALYSIS_TABLE: !Ref AIAnalysisTable
-        INCIDENT_TABLE: !Ref IncidentsTable
-        SERVICES_TABLE: !Ref ServicesTable
-        SNS_TOPIC_ARN: !Ref MonitoringAlertsTopic
+        ENVIRONMENT: production
+        MONITORING_TABLE:
+          Ref: MonitoringDataTable
+        AI_ANALYSIS_TABLE:
+          Ref: AIAnalysisTable
+        INCIDENT_TABLE:
+          Ref: IncidentsTable
+        SERVICES_TABLE:
+          Ref: ServicesTable
+        SNS_TOPIC_ARN:
+          Ref: MonitoringAlertsTopic
         SNS_ALERT_ENABLED: 'true'
-        AI_PROVIDER: 'groq'
-        GROQ_API_KEY: !Ref GroqApiKey
-        GROQ_MODEL: 'openai/gpt-oss-120b'
-        LOG_LEVEL: 'INFO'
-        ML_MODEL_PATH: '/tmp/models'
-
+        AI_PROVIDER: groq
+        GROQ_MODEL: openai/gpt-oss-120b
+        LOG_LEVEL: INFO
+        ML_MODEL_PATH: /tmp/models
+        ADMIN_SECRET_ARN:
+          Ref: AdminSecret
+        CORS_ORIGINS:
+          Ref: CorsOrigins
+        MODEL_BUCKET:
+          Ref: ModelBucket
+        DEMO_ENABLED:
+          Ref: EnableDemo
+    Layers:
+    - Ref: PythonDependencies
 Resources:
-  # ==========================================
-  # DynamoDB Storage Layer
-  # ==========================================
   ServicesTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: Services
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: service_id
-          AttributeType: S
+      - AttributeName: service_id
+        AttributeType: S
       KeySchema:
-        - AttributeName: service_id
-          KeyType: HASH
-
+      - AttributeName: service_id
+        KeyType: HASH
   MonitoringDataTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: MonitoringData
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: service_id
-          AttributeType: S
-        - AttributeName: timestamp
-          AttributeType: S
+      - AttributeName: service_id
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: S
       KeySchema:
-        - AttributeName: service_id
-          KeyType: HASH
-        - AttributeName: timestamp
-          KeyType: RANGE
+      - AttributeName: service_id
+        KeyType: HASH
+      - AttributeName: timestamp
+        KeyType: RANGE
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
-
   IncidentsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: Incidents
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: incident_id
-          AttributeType: S
-        - AttributeName: service_id
-          AttributeType: S
-        - AttributeName: created_at
-          AttributeType: S
+      - AttributeName: incident_id
+        AttributeType: S
+      - AttributeName: service_id
+        AttributeType: S
+      - AttributeName: created_at
+        AttributeType: S
       KeySchema:
-        - AttributeName: incident_id
-          KeyType: HASH
+      - AttributeName: incident_id
+        KeyType: HASH
       GlobalSecondaryIndexes:
-        - IndexName: ServiceIndex
-          KeySchema:
-            - AttributeName: service_id
-              KeyType: HASH
-            - AttributeName: created_at
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-
+      - IndexName: ServiceIndex
+        KeySchema:
+        - AttributeName: service_id
+          KeyType: HASH
+        - AttributeName: created_at
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
   AIAnalysisTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: AIAnalysis
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: analysis_id
-          AttributeType: S
-        - AttributeName: incident_id
-          AttributeType: S
-        - AttributeName: service_id
-          AttributeType: S
-        - AttributeName: timestamp
-          AttributeType: S
+      - AttributeName: analysis_id
+        AttributeType: S
+      - AttributeName: incident_id
+        AttributeType: S
+      - AttributeName: service_id
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: S
       KeySchema:
-        - AttributeName: analysis_id
-          KeyType: HASH
+      - AttributeName: analysis_id
+        KeyType: HASH
       GlobalSecondaryIndexes:
-        - IndexName: IncidentIndex
-          KeySchema:
-            - AttributeName: incident_id
-              KeyType: HASH
-            - AttributeName: timestamp
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-        - IndexName: ServiceIndex
-          KeySchema:
-            - AttributeName: service_id
-              KeyType: HASH
-            - AttributeName: timestamp
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-
-  # ==========================================
-  # SNS Alerting Topic
-  # ==========================================
+      - IndexName: IncidentIndex
+        KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      - IndexName: ServiceIndex
+        KeySchema:
+        - AttributeName: service_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
   MonitoringAlertsTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: serverless-monitoring-alerts
       DisplayName: AI Monitoring Intelligent Alerts
-
-  # ==========================================
-  # Lambda Functions
-  # ==========================================
   HealthCheckerFunction:
     Type: AWS::Serverless::Function
+    DependsOn: HealthCheckerFunctionLogGroup
     Properties:
-      CodeUri: .
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-health-checker
+      LoggingConfig:
+        LogGroup:
+          Fn::Sub: /aws/lambda/${AWS::StackName}-health-checker
+      CodeUri: backend
       Handler: backend.lambdas.health_checker.handler.handler
       Description: Periodic health checker scheduled by EventBridge
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ServicesTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MonitoringDataTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref IncidentsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AIAnalysisTable
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt MonitoringAlertsTopic.TopicName
+      - Statement:
+        - Effect: Allow
+          Action: &id001
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          - dynamodb:Scan
+          Resource:
+          - Fn::GetAtt:
+            - ServicesTable
+            - Arn
+          - Fn::Sub: ${ServicesTable.Arn}/index/*
+          - Fn::GetAtt:
+            - MonitoringDataTable
+            - Arn
+          - Fn::Sub: ${MonitoringDataTable.Arn}/index/*
+          - Fn::GetAtt:
+            - IncidentsTable
+            - Arn
+          - Fn::Sub: ${IncidentsTable.Arn}/index/*
+      - Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          Resource:
+          - Fn::Sub: ${ModelBucket.Arn}/*
+        - Effect: Allow
+          Action: s3:ListBucket
+          Resource:
+            Fn::GetAtt: [ModelBucket, Arn]
       Events:
         ScheduledCheck:
           Type: Schedule
@@ -164,53 +216,287 @@ Resources:
             Name: MonitoringScheduleRule
             Description: Triggers health check every 1 minute
             Enabled: true
-
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 300
+            DeadLetterConfig:
+              Arn:
+                Fn::GetAtt:
+                - PipelineFailures
+                - Arn
+      Timeout: 60
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination:
+              Fn::GetAtt:
+              - PipelineFailures
+              - Arn
+      ReservedConcurrentExecutions:
+        Fn::If:
+        - ReserveWorkerConcurrency
+        - Ref: WorkerReservedConcurrency
+        - Ref: AWS::NoValue
+    Metadata:
+      BuildMethod: makefile
   AnomalyDetectorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-anomaly-detector
+      CodeUri: backend
       Handler: backend.lambdas.anomaly_detector.handler.handler
-      Description: Standalone batch anomaly detector
+      Description: Daily retraining from measured telemetry
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ServicesTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MonitoringDataTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref IncidentsTable
-
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:Scan
+          - dynamodb:GetItem
+          - dynamodb:Query
+          Resource:
+          - Fn::GetAtt:
+            - ServicesTable
+            - Arn
+          - Fn::Sub: ${ServicesTable.Arn}/index/*
+          - Fn::GetAtt:
+            - MonitoringDataTable
+            - Arn
+          - Fn::Sub: ${MonitoringDataTable.Arn}/index/*
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          Resource:
+            Fn::GetAtt:
+            - ServicesTable
+            - Arn
+      - Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+          - Fn::Sub: ${ModelBucket.Arn}/*
+        - Effect: Allow
+          Action: s3:ListBucket
+          Resource:
+            Fn::GetAtt: [ModelBucket, Arn]
+      Timeout: 120
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination:
+              Fn::GetAtt:
+              - PipelineFailures
+              - Arn
+      MemorySize: 1024
+      ReservedConcurrentExecutions:
+        Fn::If:
+        - ReserveWorkerConcurrency
+        - Ref: WorkerReservedConcurrency
+        - Ref: AWS::NoValue
+      Events:
+        TrainingSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 day)
+            Enabled: true
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 300
+            DeadLetterConfig:
+              Arn:
+                Fn::GetAtt:
+                - PipelineFailures
+                - Arn
+    Metadata:
+      BuildMethod: makefile
   IncidentAnalyzerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-incident-analyzer
+      CodeUri: backend
       Handler: backend.lambdas.incident_analyzer.handler.handler
       Description: Asynchronous LLM incident explainer
       Timeout: 60
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref IncidentsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MonitoringDataTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AIAnalysisTable
-
+      - Statement:
+        - Effect: Allow
+          Action: *id001
+          Resource:
+          - Fn::GetAtt:
+            - IncidentsTable
+            - Arn
+          - Fn::Sub: ${IncidentsTable.Arn}/index/*
+          - Fn::GetAtt:
+            - AIAnalysisTable
+            - Arn
+          - Fn::Sub: ${AIAnalysisTable.Arn}/index/*
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:Scan
+          - dynamodb:Query
+          Resource:
+          - Fn::GetAtt:
+            - ServicesTable
+            - Arn
+          - Fn::Sub: ${ServicesTable.Arn}/index/*
+          - Fn::GetAtt:
+            - MonitoringDataTable
+            - Arn
+          - Fn::Sub: ${MonitoringDataTable.Arn}/index/*
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Fn::GetAtt:
+            - MonitoringAlertsTopic
+            - TopicName
+      - Fn::If:
+        - HasGroqSecret
+        - Statement:
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetSecretValue
+            Resource:
+            - Ref: GroqSecretArn
+        - Fn::If:
+          - HasGroqKey
+          - Statement:
+            - Effect: Allow
+              Action:
+              - secretsmanager:GetSecretValue
+              Resource:
+              - Ref: GroqManagedSecret
+          - Ref: AWS::NoValue
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination:
+              Fn::GetAtt:
+              - PipelineFailures
+              - Arn
+      Environment:
+        Variables:
+          GROQ_SECRET_ARN: &id002
+            Fn::If:
+            - HasGroqSecret
+            - Ref: GroqSecretArn
+            - Fn::If:
+              - HasGroqKey
+              - Ref: GroqManagedSecret
+              - ''
+      Events:
+        IncidentStream:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              Fn::GetAtt:
+              - IncidentsTable
+              - StreamArn
+            StartingPosition: LATEST
+            BatchSize: 1
+            MaximumRetryAttempts: 3
+            MaximumRecordAgeInSeconds: 3600
+            BisectBatchOnFunctionError: true
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination:
+                  Fn::GetAtt:
+                  - PipelineFailures
+                  - Arn
+            FilterCriteria:
+              Filters:
+              - Pattern: '{"eventName":["INSERT","MODIFY"]}'
+    Metadata:
+      BuildMethod: makefile
   ApiFunction:
     Type: AWS::Serverless::Function
+    DependsOn: ApiFunctionLogGroup
     Properties:
-      CodeUri: .
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-api
+      LoggingConfig:
+        LogGroup:
+          Fn::Sub: /aws/lambda/${AWS::StackName}-api
+      CodeUri: backend
       Handler: backend.main.handler
       Description: FastAPI serverless REST API
       Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ServicesTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MonitoringDataTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref IncidentsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AIAnalysisTable
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt MonitoringAlertsTopic.TopicName
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          - dynamodb:Scan
+          - dynamodb:DeleteItem
+          Resource:
+          - Fn::GetAtt:
+            - ServicesTable
+            - Arn
+          - Fn::Sub: ${ServicesTable.Arn}/index/*
+          - Fn::GetAtt:
+            - MonitoringDataTable
+            - Arn
+          - Fn::Sub: ${MonitoringDataTable.Arn}/index/*
+          - Fn::GetAtt:
+            - IncidentsTable
+            - Arn
+          - Fn::Sub: ${IncidentsTable.Arn}/index/*
+          - Fn::GetAtt:
+            - AIAnalysisTable
+            - Arn
+          - Fn::Sub: ${AIAnalysisTable.Arn}/index/*
+      - Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+          - Ref: AdminSecret
+      - Fn::If:
+        - HasGroqSecret
+        - Statement:
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetSecretValue
+            Resource:
+            - Ref: GroqSecretArn
+        - Fn::If:
+          - HasGroqKey
+          - Statement:
+            - Effect: Allow
+              Action:
+              - secretsmanager:GetSecretValue
+              Resource:
+              - Ref: GroqManagedSecret
+          - Ref: AWS::NoValue
+      - Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          Resource:
+          - Fn::Sub: ${ModelBucket.Arn}/*
+        - Effect: Allow
+          Action: s3:ListBucket
+          Resource:
+            Fn::GetAtt: [ModelBucket, Arn]
+      - Statement:
+        - Effect: Allow
+          Action:
+          - sns:ListSubscriptionsByTopic
+          Resource:
+          - Ref: MonitoringAlertsTopic
       Events:
         HttpApi:
           Type: HttpApi
@@ -222,23 +508,378 @@ Resources:
           Properties:
             Path: /
             Method: ANY
-
+      Timeout: 29
+      Environment:
+        Variables:
+          GROQ_SECRET_ARN: *id002
+    Metadata:
+      BuildMethod: makefile
+  AdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: ISMS administrator bearer token
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+  ModelBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+        - Id: ExpireOldModelVersions
+          Status: Enabled
+          NoncurrentVersionExpiration:
+            NoncurrentDays: 30
+  PythonDependencies:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      ContentUri: backend
+      CompatibleRuntimes:
+      - python3.11
+      RetentionPolicy: Retain
+  PipelineFailures:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      Protocol: email
+      Endpoint:
+        Ref: AlertEmail
+      TopicArn:
+        Ref: MonitoringAlertsTopic
+  DemoFunction:
+    Type: AWS::Serverless::Function
+    Condition: DemoEnabled
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      CodeUri: backend
+      Handler: backend.demo.handler
+      Timeout: 20
+      MemorySize: 128
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          Resource:
+          - Fn::GetAtt:
+            - ServicesTable
+            - Arn
+          - Fn::Sub: ${ServicesTable.Arn}/index/*
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            Path: /demo/health
+            Method: GET
+  HealthCheckerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${AWS::StackName}-health-checker
+      RetentionInDays: 14
+  HealthCheckerFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: HealthCheckerFunction'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: HealthCheckerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  AnomalyDetectorFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${AnomalyDetectorFunction}
+      RetentionInDays: 14
+  AnomalyDetectorFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: AnomalyDetectorFunction'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: AnomalyDetectorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  IncidentAnalyzerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${IncidentAnalyzerFunction}
+      RetentionInDays: 14
+  IncidentAnalyzerFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: IncidentAnalyzerFunction'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: IncidentAnalyzerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${AWS::StackName}-api
+      RetentionInDays: 14
+  ApiFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: ApiFunction'
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+      - Name: FunctionName
+        Value:
+          Ref: ApiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  DemoFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName:
+        Fn::Sub: /aws/lambda/${DemoFunction}
+      RetentionInDays: 14
+    Condition: DemoEnabled
+  PipelineFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: discarded pipeline events'
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - PipelineFailures
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  EventDeliveryQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+      - Ref: PipelineFailures
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: events.amazonaws.com
+          Action: sqs:SendMessage
+          Resource:
+            Fn::GetAtt:
+            - PipelineFailures
+            - Arn
+          Condition:
+            ArnEquals:
+              aws:SourceArn:
+              - Fn::GetAtt:
+                - HealthCheckerFunctionScheduledCheck
+                - Arn
+              - Fn::GetAtt:
+                - AnomalyDetectorFunctionTrainingSchedule
+                - Arn
+  HealthCheckerFunctionFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: HealthCheckerFunctionLogGroup
+      FilterPattern: '{ ($.action = "platform_failure") || ($.action = "sns_failure")
+        || ($.action = "ml_failure") || ($.action = "ai_analysis_fallback") || ($.action
+        = "ai_chat_failure") }'
+      MetricTransformations:
+      - MetricNamespace: ISMS/Platform
+        MetricName: Failures
+        MetricValue: '1'
+        DefaultValue: 0
+  AnomalyDetectorFunctionFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: AnomalyDetectorFunctionLogGroup
+      FilterPattern: '{ ($.action = "platform_failure") || ($.action = "sns_failure")
+        || ($.action = "ml_failure") || ($.action = "ai_analysis_fallback") || ($.action
+        = "ai_chat_failure") }'
+      MetricTransformations:
+      - MetricNamespace: ISMS/Platform
+        MetricName: Failures
+        MetricValue: '1'
+        DefaultValue: 0
+  IncidentAnalyzerFunctionFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: IncidentAnalyzerFunctionLogGroup
+      FilterPattern: '{ ($.action = "platform_failure") || ($.action = "sns_failure")
+        || ($.action = "ml_failure") || ($.action = "ai_analysis_fallback") || ($.action
+        = "ai_chat_failure") }'
+      MetricTransformations:
+      - MetricNamespace: ISMS/Platform
+        MetricName: Failures
+        MetricValue: '1'
+        DefaultValue: 0
+  ApiFunctionFailureMetric:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName:
+        Ref: ApiFunctionLogGroup
+      FilterPattern: '{ ($.action = "platform_failure") || ($.action = "sns_failure")
+        || ($.action = "ml_failure") || ($.action = "ai_analysis_fallback") || ($.action
+        = "ai_chat_failure") }'
+      MetricTransformations:
+      - MetricNamespace: ISMS/Platform
+        MetricName: Failures
+        MetricValue: '1'
+        DefaultValue: 0
+  PlatformFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'ISMS PLATFORM FAILURE: dependency, AI or notification operation
+        failed'
+      Namespace: ISMS/Platform
+      MetricName: Failures
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: MonitoringAlertsTopic
+  GroqManagedSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: HasGroqKey
+    Properties:
+      Description: ISMS Groq provider credential
+      SecretString:
+        Ref: GroqApiKey
 Outputs:
   ApiEndpoint:
     Description: HTTP API Gateway endpoint URL for FastAPI backend
-    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Value:
+      Fn::Sub: https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com
   SnsTopicArn:
     Description: Amazon SNS Topic ARN for intelligent alerting
-    Value: !Ref MonitoringAlertsTopic
+    Value:
+      Ref: MonitoringAlertsTopic
   ServicesTableName:
     Description: Services DynamoDB table
-    Value: !Ref ServicesTable
+    Value:
+      Ref: ServicesTable
   MonitoringDataTableName:
     Description: MonitoringData DynamoDB table
-    Value: !Ref MonitoringDataTable
+    Value:
+      Ref: MonitoringDataTable
   IncidentsTableName:
     Description: Incidents DynamoDB table
-    Value: !Ref IncidentsTable
+    Value:
+      Ref: IncidentsTable
   AIAnalysisTableName:
     Description: AIAnalysis DynamoDB table
-    Value: !Ref AIAnalysisTable
+    Value:
+      Ref: AIAnalysisTable
+  AdminSecretArn:
+    Description: Retrieve administrator token with Secrets Manager; never put it in
+      frontend build settings
+    Value:
+      Ref: AdminSecret
+  ModelBucketName:
+    Value:
+      Ref: ModelBucket
+  DemoHealthEndpoint:
+    Condition: DemoEnabled
+    Value:
+      Fn::Sub: https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/demo/health
+  FailureQueueUrl:
+    Value:
+      Ref: PipelineFailures
+Conditions:
+  ReserveWorkerConcurrency:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: WorkerReservedConcurrency
+      - 0
+  HasAlertEmail:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AlertEmail
+      - ''
+  HasGroqSecret:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: GroqSecretArn
+      - ''
+  DemoEnabled:
+    Fn::Equals:
+    - Ref: EnableDemo
+    - 'true'
+  HasGroqKey:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: GroqApiKey
+      - ''

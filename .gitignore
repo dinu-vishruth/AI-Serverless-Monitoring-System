@@ -27,6 +27,7 @@ env/
 
 # AWS
 .aws-sam/
+.build-source/
 samconfig.toml
 
 # ML Models
@@ -44,6 +45,7 @@ frontend/build/
 
 # Local database cache
 .local_db.json
+.local_db.sqlite3*
 
 # OS
 .DS_Store

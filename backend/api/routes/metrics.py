@@ -27,6 +27,7 @@ def get_system_overview():
     healthy = 0
     degraded = 0
     down = 0
+    unknown = 0
     total_rt = 0.0
     rt_count = 0
     total_avail = 0.0
@@ -43,17 +44,21 @@ def get_system_overview():
             rt_count += 1
             total_avail += avail
 
-            if avail == 0:
+            from backend.operations import service_health
+            health = service_health(s, latest)
+            if health == "UNKNOWN":
+                unknown += 1
+            elif health == "DOWN":
                 down += 1
-            elif err > 0 or rt > float(s.get("response_time_threshold", 2000)):
+            elif health == "DEGRADED":
                 degraded += 1
             else:
                 healthy += 1
         else:
-            healthy += 1
+            unknown += 1
 
     avg_rt = round(total_rt / rt_count, 2) if rt_count > 0 else 0.0
-    overall_avail = round((total_avail / total) * 100, 2) if total > 0 else 100.0
+    overall_avail = round((total_avail / rt_count) * 100, 2) if rt_count else None
 
     # Calculate overall health score (0-100)
     # Deduct points for open incidents and degraded services
@@ -72,6 +77,7 @@ def get_system_overview():
         active_incidents=len(open_incidents),
         average_response_time_ms=avg_rt,
         overall_availability_percentage=overall_avail,
-        system_health_score=health_score,
+        system_health_score=health_score if rt_count else None,
         last_updated=datetime.now(timezone.utc).isoformat(),
+        unknown_services=unknown,
     )

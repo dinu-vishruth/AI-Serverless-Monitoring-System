@@ -4,8 +4,8 @@ import { Activity, AlertTriangle, CheckCircle, Clock, ShieldCheck, Zap } from 'l
 export default function OverviewCards({ overview }) {
   if (!overview) return null;
 
-  const healthScore = overview.system_health_score ?? 100;
-  const isHealthy = healthScore >= 90;
+  const healthScore = overview.system_health_score;
+  const isHealthy = healthScore != null && healthScore >= 90;
   const isDegraded = healthScore >= 70 && healthScore < 90;
 
   return (
@@ -23,10 +23,10 @@ export default function OverviewCards({ overview }) {
         <div className="stat-value" style={{
           color: isHealthy ? 'var(--accent-healthy)' : isDegraded ? 'var(--accent-degraded)' : 'var(--accent-critical)'
         }}>
-          {healthScore.toFixed(0)}<span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/100</span>
+          {healthScore == null ? 'Unknown' : healthScore.toFixed(0)}<span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>{healthScore == null ? '' : '/100'}</span>
         </div>
         <div className="stat-subtext">
-          {isHealthy ? 'Operational & Protected' : isDegraded ? 'Degraded Performance' : 'Critical Attention Required'}
+          {healthScore == null ? 'Awaiting observed telemetry' : isHealthy ? 'Operational' : isDegraded ? 'Degraded Performance' : 'Critical Attention Required'}
         </div>
       </div>
 
@@ -82,8 +82,8 @@ export default function OverviewCards({ overview }) {
             <Zap size={18} color="var(--accent-ai)" />
           </div>
         </div>
-        <div className="stat-value">{overview.overall_availability_percentage.toFixed(1)}%</div>
-        <div className="stat-subtext">SLA uptime compliance</div>
+        <div className="stat-value">{overview.overall_availability_percentage == null ? 'Unknown' : `${overview.overall_availability_percentage.toFixed(1)}%`}</div>
+        <div className="stat-subtext">Latest probe availability · {overview.unknown_services || 0} unknown</div>
       </div>
     </div>
   );

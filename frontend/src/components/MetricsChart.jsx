@@ -81,7 +81,7 @@ export default function MetricsChart({ records = [], title = "Response Time (ms)
 
         {/* Data points & anomaly pulses */}
         {points.map((p, i) => {
-          const isAnomaly = p.record.anomaly || p.record.error > 0;
+          const isAnomaly = p.record.anomaly;
           return (
             <circle
               key={i}

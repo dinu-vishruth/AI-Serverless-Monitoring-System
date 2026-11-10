@@ -69,6 +69,9 @@ export default function AddServiceModal({ onClose, onCreated }) {
         )}
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group"><label className="form-label">Dependency service IDs (comma separated)</label><input className="form-input" onChange={(e) => setFormData({ ...formData, dependencies: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })} /></div>
+          <div className="form-group"><label className="form-label">Availability target (%)</label><input className="form-input" type="number" min="1" max="100" step="0.01" defaultValue="99.9" onChange={(e) => setFormData({ ...formData, availability_target: Number(e.target.value) })} /></div>
+          <div className="form-group"><label className="form-label">P95 latency target (ms)</label><input className="form-input" type="number" min="1" defaultValue="500" onChange={(e) => setFormData({ ...formData, latency_target_ms: Number(e.target.value) })} /></div>
           <div className="form-group">
             <label className="form-label">Service Name *</label>
             <input
@@ -102,7 +105,6 @@ export default function AddServiceModal({ onClose, onCreated }) {
                 onChange={(e) => setFormData({ ...formData, http_method: e.target.value })}
               >
                 <option value="GET">GET</option>
-                <option value="POST">POST</option>
                 <option value="HEAD">HEAD</option>
               </select>
             </div>

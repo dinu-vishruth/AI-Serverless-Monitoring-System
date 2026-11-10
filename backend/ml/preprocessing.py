@@ -109,10 +109,10 @@ def add_derived_features(df: pd.DataFrame, window: int = 10) -> pd.DataFrame:
     # Rolling averages
     effective_window = min(window, len(df))
     df["rolling_avg_response_time"] = (
-        df["response_time"].rolling(window=effective_window, min_periods=1).mean()
+        df["response_time"].shift(1).rolling(window=effective_window, min_periods=1).mean().fillna(df["response_time"])
     )
     df["rolling_error_rate"] = (
-        df["error_rate"].rolling(window=effective_window, min_periods=1).mean()
+        df["error_rate"].shift(1).rolling(window=effective_window, min_periods=1).mean().fillna(df["error_rate"])
     )
 
     # Change ratios (current / rolling average) — clamped to avoid div-by-zero
@@ -157,7 +157,7 @@ def prepare_single_record(
     If historical records are provided, derived features are computed from them.
     """
     if historical_records:
-        all_records = historical_records + [record]
+        all_records = [r for r in historical_records if r.get("timestamp", "") < record.get("timestamp", "")] + [record]
     else:
         all_records = [record]
 
@@ -175,7 +175,18 @@ def validate_records(records: list[dict]) -> list[dict]:
     for r in records:
         if not r.get("service_id") or not r.get("timestamp"):
             continue
-        if r.get("response_time") is None and r.get("status_code") is None:
+        if any(r.get(k) is None for k in ("response_time", "status_code", "error_rate", "availability", "timeout", "request_success")):
+            continue
+        try:
+            values = [float(r[k]) for k in ("response_time", "status_code", "error_rate", "availability", "timeout", "request_success")]
+            if not all(np.isfinite(v) for v in values) or values[0] < 0 or not 0 <= values[2] <= 1:
+                continue
+            if any(v not in (0, 1) for v in values[3:]):
+                continue
+        except (TypeError, ValueError):
+            continue
+        if r.get("synthetic"):
             continue
         valid.append(r)
-    return valid
+    unique = {(r["service_id"], r["timestamp"]): r for r in valid}
+    return sorted(unique.values(), key=lambda r: r["timestamp"])
